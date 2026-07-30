@@ -13,6 +13,8 @@ import time
 import tkinter as tk
 from collections import deque
 from dataclasses import dataclass
+import json
+from pathlib import Path
 from tkinter import messagebox, ttk
 
 
@@ -102,16 +104,22 @@ class DaqService:
 
 
 class TrendGraph(tk.Canvas):
-    def __init__(self, parent: tk.Misc, title: str, lines: list[tuple[str, str]]) -> None:
+    def __init__(self, parent: tk.Misc, title: str, lines: list[tuple[str, str]],
+                 low: float = 0.0, high: float = 5.0, unit: str = "V") -> None:
         super().__init__(parent, bg="#131b2a", highlightthickness=0, height=300)
         self.title, self.lines = title, lines
         self.series = [deque(maxlen=120) for _ in lines]
+        self.low, self.high, self.unit = low, high, unit
         self.bind("<Configure>", lambda _event: self.draw())
 
     def add(self, *values: float) -> None:
         for values_, value in zip(self.series, values):
             values_.append(float(value))
         self.draw()
+
+    def set_scale(self, low: float, high: float, unit: str) -> None:
+        if high > low:
+            self.low, self.high, self.unit = low, high, unit
 
     def draw(self) -> None:
         self.delete("all")
@@ -121,7 +129,7 @@ class TrendGraph(tk.Canvas):
                          font=("Arial", 12, "bold"))
         for i in range(5):
             y = top + (bottom - top) * i / 4
-            value = 5 - 5 * i / 4
+            value = self.high - (self.high - self.low) * i / 4
             self.create_line(left, y, right, y, fill="#26354c")
             self.create_text(left - 8, y, text=f"{value:.1f}", fill="#8fa2bc",
                              anchor="e", font=("Arial", 9))
@@ -137,13 +145,15 @@ class TrendGraph(tk.Canvas):
             coords: list[float] = []
             for point_index, value in enumerate(points):
                 x = left + (right - left) * point_index / (len(points) - 1)
-                y = bottom - (max(0.0, min(5.0, value)) / 5.0) * (bottom - top)
+                fraction = (value - self.low) / (self.high - self.low)
+                y = bottom - max(0.0, min(1.0, fraction)) * (bottom - top)
                 coords.extend((x, y))
             self.create_line(*coords, fill=color, width=2, smooth=True)
 
 
 class NidaqApp(tk.Tk):
     POLL_MS = 150
+    SETTINGS_PATH = Path(__file__).with_name("settings.json")
 
     def __init__(self) -> None:
         super().__init__()
@@ -157,8 +167,12 @@ class NidaqApp(tk.Tk):
         self.ai_running = False
         self.feedback_running = False
         self.status_on = False
+        self.feedback_integral = 0.0
+        self.filtered_pv: float | None = None
+        self._last_feedback_at: float | None = None
         self._build_style()
         self._build_layout()
+        self.load_feedback_settings()
         self.show_page("ai")
         self.refresh_connection()
         self.after(self.POLL_MS, self.update_loop)
@@ -265,23 +279,45 @@ class NidaqApp(tk.Tk):
     def _create_feedback_page(self) -> ttk.Frame:
         page = ttk.Frame(self.content, style="App.TFrame")
         page.columnconfigure(1, weight=1)
+        page.rowconfigure(0, weight=1)
         controls = self.panel(page)
         controls.grid(row=0, column=0, sticky="nsw", padx=(0, 16))
         ttk.Label(controls, text="피드백 제어 설정", style="Panel.TLabel",
                   font=("Arial", 14, "bold")).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 18))
-        self.sv = self.field(controls, 1, "SV 설정값 (V)", "2.50")
-        self.gain = self.field(controls, 2, "Gain (P)", "1.00")
-        self.pv_value = ttk.Label(controls, text="PV: 0.000 V", style="Value.TLabel")
-        self.pv_value.grid(row=3, column=0, columnspan=2, sticky="w", pady=(20, 2))
-        self.output_value = ttk.Label(controls, text="AO 출력: 0.000 V", style="Panel.TLabel")
-        self.output_value.grid(row=4, column=0, columnspan=2, sticky="w")
+        self.feedback_voltage_min = self.field(controls, 1, "AI 최소 전압 (V)", "0.0")
+        self.feedback_voltage_max = self.field(controls, 2, "AI 최대 전압 (V)", "5.0")
+        self.feedback_process_type = tk.StringVar(value="유량")
+        ttk.Label(controls, text="공정 단위", style="Panel.TLabel").grid(row=3, column=0, sticky="w", pady=8)
+        ttk.Combobox(controls, textvariable=self.feedback_process_type, values=["유량", "압력"],
+                     state="readonly", width=12).grid(row=3, column=1, padx=(15, 0))
+        self.feedback_process_min = self.field(controls, 4, "공정 범위 최소", "0.0")
+        self.feedback_process_max = self.field(controls, 5, "공정 범위 최대", "100.0")
+        self.sv = self.field(controls, 6, "SV 설정값 (공정값)", "50.0")
+        self.p_gain = self.field(controls, 7, "P Gain (V/공정값)", "0.10")
+        self.i_gain = self.field(controls, 8, "I Gain (V/공정값·s)", "0.01")
+        self.lpf_cutoff = self.field(controls, 9, "LPF 차단 주파수 (Hz)", "2.0")
+        self.pv_value = ttk.Label(controls, text="PV: 0.00", style="Value.TLabel")
+        self.pv_value.grid(row=10, column=0, columnspan=2, sticky="w", pady=(14, 2))
+        self.ai_voltage_value = ttk.Label(controls, text="AI 입력: 0.000 V", style="Panel.TLabel")
+        self.ai_voltage_value.grid(row=11, column=0, columnspan=2, sticky="w")
+        self.output_value = ttk.Label(controls, text="AO 현재 출력: 0.000 V", style="Panel.TLabel")
+        self.output_value.grid(row=12, column=0, columnspan=2, sticky="w")
         self.feedback_button = ttk.Button(controls, text="피드백 제어 시작", style="Start.TButton",
                                           command=self.toggle_feedback)
-        self.feedback_button.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(22, 0))
-        ttk.Label(controls, text="출력 = clamp(Gain × (SV − PV), 0, 5V)", style="Panel.TLabel",
-                  wraplength=225).grid(row=6, column=0, columnspan=2, sticky="w", pady=(14, 0))
-        self.feedback_graph = TrendGraph(page, "피드백 제어 추이", [("PV", "#52c7f5"), ("SV", "#eb6e99"), ("AO", "#72d19d")])
-        self.feedback_graph.grid(row=0, column=1, sticky="nsew")
+        self.feedback_button.grid(row=13, column=0, sticky="ew", pady=(18, 0))
+        ttk.Button(controls, text="설정 저장", command=self.save_feedback_settings).grid(
+            row=13, column=1, sticky="ew", padx=(8, 0), pady=(18, 0))
+        ttk.Label(controls, text="AO = clamp(P×오차 + I×∫오차dt, 0~5V)", style="Panel.TLabel",
+                  wraplength=250).grid(row=14, column=0, columnspan=2, sticky="w", pady=(12, 0))
+        graphs = ttk.Frame(page, style="App.TFrame")
+        graphs.grid(row=0, column=1, sticky="nsew")
+        graphs.rowconfigure((0, 1), weight=1)
+        graphs.columnconfigure(0, weight=1)
+        self.feedback_graph = TrendGraph(
+            graphs, "PV / SV 공정값 추이", [("PV", "#52c7f5"), ("SV", "#eb6e99")], 0, 100, "공정값")
+        self.feedback_graph.grid(row=0, column=0, sticky="nsew", pady=(0, 8))
+        self.feedback_ao_graph = TrendGraph(graphs, "AO 출력 전압 추이", [("AO", "#72d19d")])
+        self.feedback_ao_graph.grid(row=1, column=0, sticky="nsew")
         return page
 
     def field(self, parent: tk.Misc, row: int, label: str, default: str) -> tk.StringVar:
@@ -321,7 +357,13 @@ class NidaqApp(tk.Tk):
         self.ao_graph.add(voltage)
 
     def toggle_feedback(self) -> None:
+        if not self.feedback_running and not self.validate_feedback_inputs():
+            return
         self.feedback_running = not self.feedback_running
+        if self.feedback_running:
+            self.feedback_integral = 0.0
+            self.filtered_pv = None
+            self._last_feedback_at = time.monotonic()
         self.feedback_button.configure(
             text="피드백 제어 중지" if self.feedback_running else "피드백 제어 시작",
             style="Stop.TButton" if self.feedback_running else "Start.TButton")
@@ -337,14 +379,88 @@ class NidaqApp(tk.Tk):
                 self.ai_process_value.configure(text=f"{self.process_type.get()} 환산값: {converted:.2f}")
             self.ai_graph.add(voltage)
         if self.feedback_running:
-            pv = self.daq.read_voltage(self.channels.feedback_ai)
-            sv, gain = self.number_silent(self.sv, 0), self.number_silent(self.gain, 1)
-            output = max(0.0, min(5.0, gain * (sv - pv)))
+            raw_voltage = self.daq.read_voltage(self.channels.feedback_ai)
+            low_v = self.number_silent(self.feedback_voltage_min, 0)
+            high_v = self.number_silent(self.feedback_voltage_max, 5)
+            low_p = self.number_silent(self.feedback_process_min, 0)
+            high_p = self.number_silent(self.feedback_process_max, 100)
+            raw_pv = low_p + (raw_voltage - low_v) / (high_v - low_v) * (high_p - low_p)
+            now = time.monotonic()
+            dt = max(now - (self._last_feedback_at or now), 0.001)
+            self._last_feedback_at = now
+            lpf_hz = self.number_silent(self.lpf_cutoff, 0)
+            if self.filtered_pv is None or lpf_hz <= 0:
+                self.filtered_pv = raw_pv
+            else:
+                tau = 1 / (2 * math.pi * lpf_hz)
+                self.filtered_pv += dt / (tau + dt) * (raw_pv - self.filtered_pv)
+            pv, sv = self.filtered_pv, self.number_silent(self.sv, 0)
+            p_gain, i_gain = self.number_silent(self.p_gain, 0), self.number_silent(self.i_gain, 0)
+            error = sv - pv
+            integral_candidate = self.feedback_integral + error * dt
+            unconstrained = p_gain * error + i_gain * integral_candidate
+            output = max(0.0, min(5.0, unconstrained))
+            # Integrate only when it will not increase output saturation.
+            if output == unconstrained or (output == 5.0 and error < 0) or (output == 0.0 and error > 0):
+                self.feedback_integral = integral_candidate
             self.daq.write_voltage(self.channels.feedback_ao, output)
-            self.pv_value.configure(text=f"PV: {pv:.3f} V")
-            self.output_value.configure(text=f"AO 출력: {output:.3f} V")
-            self.feedback_graph.add(pv, sv, output)
+            unit = self.feedback_process_type.get()
+            self.pv_value.configure(text=f"PV: {pv:.2f} {unit}  |  SV: {sv:.2f} {unit}")
+            self.ai_voltage_value.configure(text=f"AI 입력: {raw_voltage:.3f} V  (LPF 적용)")
+            self.output_value.configure(text=f"AO 현재 출력: {output:.3f} V")
+            self.feedback_graph.set_scale(low_p, high_p, unit)
+            self.feedback_graph.add(pv, sv)
+            self.feedback_ao_graph.add(output)
         self.after(self.POLL_MS, self.update_loop)
+
+    def validate_feedback_inputs(self) -> bool:
+        fields = [
+            (self.feedback_voltage_min, "AI 최소 전압"), (self.feedback_voltage_max, "AI 최대 전압"),
+            (self.feedback_process_min, "공정 범위 최소"), (self.feedback_process_max, "공정 범위 최대"),
+            (self.sv, "SV"), (self.p_gain, "P Gain"), (self.i_gain, "I Gain"),
+            (self.lpf_cutoff, "LPF 차단 주파수"),
+        ]
+        values = {label: self.number(variable, label) for variable, label in fields}
+        if any(value is None for value in values.values()):
+            return False
+        if values["AI 최대 전압"] <= values["AI 최소 전압"]:
+            messagebox.showerror("범위 오류", "AI 최대 전압은 최소 전압보다 커야 합니다.")
+            return False
+        if values["공정 범위 최대"] <= values["공정 범위 최소"]:
+            messagebox.showerror("범위 오류", "공정 범위 최대값은 최소값보다 커야 합니다.")
+            return False
+        if not 0 <= values["AI 최소 전압"] < values["AI 최대 전압"] <= 5:
+            messagebox.showerror("범위 오류", "AI 전압 범위는 0.0 ~ 5.0 V 안에 있어야 합니다.")
+            return False
+        if values["P Gain"] < 0 or values["I Gain"] < 0 or values["LPF 차단 주파수"] < 0:
+            messagebox.showerror("입력 오류", "P Gain, I Gain, LPF 값은 0 이상이어야 합니다.")
+            return False
+        return True
+
+    def save_feedback_settings(self) -> None:
+        if not self.validate_feedback_inputs():
+            return
+        fields = ("feedback_voltage_min", "feedback_voltage_max", "feedback_process_min",
+                  "feedback_process_max", "sv", "p_gain", "i_gain", "lpf_cutoff")
+        data = {field: getattr(self, field).get() for field in fields}
+        data["feedback_process_type"] = self.feedback_process_type.get()
+        try:
+            self.SETTINGS_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+            messagebox.showinfo("저장 완료", f"피드백 설정을 저장했습니다.\n{self.SETTINGS_PATH.name}")
+        except OSError as exc:
+            messagebox.showerror("저장 오류", f"설정을 저장할 수 없습니다.\n{exc}")
+
+    def load_feedback_settings(self) -> None:
+        try:
+            data = json.loads(self.SETTINGS_PATH.read_text(encoding="utf-8"))
+            for field in ("feedback_voltage_min", "feedback_voltage_max", "feedback_process_min",
+                          "feedback_process_max", "sv", "p_gain", "i_gain", "lpf_cutoff"):
+                if field in data:
+                    getattr(self, field).set(str(data[field]))
+            if data.get("feedback_process_type") in ("유량", "압력"):
+                self.feedback_process_type.set(data["feedback_process_type"])
+        except (OSError, json.JSONDecodeError):
+            pass
 
     @staticmethod
     def number_silent(variable: tk.StringVar, fallback: float) -> float:
