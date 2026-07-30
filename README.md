@@ -17,18 +17,25 @@ python -m pip install -r requirements.txt
 python nidaq_ui/app.py
 ```
 
+## 하드웨어 (NI MAX 기준)
+
+| 슬롯 | 모델 | Device Name | Serial |
+| --- | --- | --- | --- |
+| 2 | NI 9206 | `cDAQ1Mod2` | 01F4D2D3 |
+| 3 | NI 9264 | `cDAQ1Mod3` | 01FA4B72 |
+
+첫 번째 모듈/슬롯은 다른 용도로 사용 중이므로 비워 둡니다.
+
 ## 기본 채널 배정
 
-`채널 설정`에서 실제 cDAQ 섀시/모듈 이름에 맞게 바꿉니다. 기본값은 두 번째 채널(DAQmx 채널 인덱스 `1`)을 AI/AO 시험, 세 번째 채널(인덱스 `2`)을 피드백 제어에 사용하도록 설정되어 있습니다.
+두 번째 채널(DAQmx 인덱스 `1`)은 AI/AO 시험, 세 번째 채널(인덱스 `2`)은 피드백 제어입니다.
 
-| 기능 | 기본 DAQmx 채널 |
+| 기능 | DAQmx 채널 |
 | --- | --- |
-| AI TEST (NI-9206) | `cDAQ1Mod2/ai1` |
-| AO TEST (NI-9264) | `cDAQ1Mod3/ao1` |
-| Feedback PV (NI-9206) | `cDAQ1Mod2/ai2` |
-| Feedback AO (NI-9264) | `cDAQ1Mod3/ao2` |
-
-첫 번째 모듈은 전혀 사용하지 않습니다. 실제로 NI-9206과 NI-9264가 꽂힌 슬롯 번호가 다르면 앱의 `채널 설정`에서 해당 `Mod` 번호를 반드시 변경하세요.
+| AI TEST (NI 9206) | `cDAQ1Mod2/ai1` |
+| AO TEST (NI 9264) | `cDAQ1Mod3/ao1` |
+| Feedback PV (NI 9206) | `cDAQ1Mod2/ai2` |
+| Feedback AO (NI 9264) | `cDAQ1Mod3/ao2` |
 
 ## 화면 기능
 

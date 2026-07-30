@@ -16,23 +16,36 @@ from dataclasses import dataclass
 from tkinter import messagebox, ttk
 
 
+# Confirmed from NI MAX:
+#   Slot 2: NI 9206 -> cDAQ1Mod2 (S/N 01F4D2D3)
+#   Slot 3: NI 9264 -> cDAQ1Mod3 (S/N 01FA4B72)
+# First module/slot is reserved for another system and left unused.
+AI_MODULE = "cDAQ1Mod2"
+AO_MODULE = "cDAQ1Mod3"
+
+
 @dataclass
 class ChannelConfig:
-    """DAQmx physical channels; edit these for the actual cDAQ chassis layout."""
+    """DAQmx physical channels matching the installed NI 9206 / NI 9264."""
 
-    ai_test: str = "cDAQ1Mod2/ai1"
-    ao_test: str = "cDAQ1Mod3/ao1"
-    feedback_ai: str = "cDAQ1Mod2/ai2"
-    feedback_ao: str = "cDAQ1Mod3/ao2"
+    # 2nd channel (ai1/ao1) = individual AI/AO TEST
+    # 3rd channel (ai2/ao2) = feedback control PV/AO
+    ai_test: str = f"{AI_MODULE}/ai1"
+    ao_test: str = f"{AO_MODULE}/ao1"
+    feedback_ai: str = f"{AI_MODULE}/ai2"
+    feedback_ao: str = f"{AO_MODULE}/ao2"
 
 
 class DaqService:
     """Small hardware boundary that makes the GUI runnable without a DAQ."""
 
+    REQUIRED_DEVICES = (AI_MODULE, AO_MODULE)
+
     def __init__(self, channels: ChannelConfig) -> None:
         self.channels = channels
         self.available = False
         self.error = "NI-DAQmx를 확인하는 중입니다."
+        self.device_summary = "NI 9206(cDAQ1Mod2) / NI 9264(cDAQ1Mod3) 대기"
         self._nidaqmx = None
         try:
             import nidaqmx  # type: ignore
@@ -46,9 +59,21 @@ class DaqService:
             self.available = False
             return False
         try:
-            devices = list(self._nidaqmx.system.System.local().devices)
-            self.available = bool(devices)
-            self.error = "연결됨" if self.available else "NI-DAQ 장치를 찾을 수 없습니다."
+            devices = {device.name: device for device in self._nidaqmx.system.System.local().devices}
+            missing = [name for name in self.REQUIRED_DEVICES if name not in devices]
+            if missing:
+                self.available = False
+                self.error = f"장치 없음: {', '.join(missing)}"
+                self.device_summary = "NI MAX에서 cDAQ1Mod2 / cDAQ1Mod3 확인 필요"
+                return False
+            ai = devices[AI_MODULE]
+            ao = devices[AO_MODULE]
+            self.available = True
+            self.error = "연결됨"
+            self.device_summary = (
+                f"NI 9206 {AI_MODULE} / NI 9264 {AO_MODULE} "
+                f"(S/N {getattr(ai, 'serial_num', '?')}/{getattr(ao, 'serial_num', '?')})"
+            )
         except Exception as exc:  # Hardware/driver failures should not stop UI.
             self.available = False
             self.error = f"통신 오류: {exc}"
@@ -333,7 +358,7 @@ class NidaqApp(tk.Tk):
         self.status_on = not self.status_on
         color = "#39cf86" if connected and self.status_on else "#1d6e50" if connected else "#c03d4b"
         self.status_canvas.itemconfigure(self.status_dot, fill=color)
-        text = "NI-DAQ 통신 연결됨" if connected else self.daq.error
+        text = self.daq.device_summary if connected else self.daq.error
         self.status_label.configure(text=text)
         self.after(700 if connected else 2000, self.refresh_connection)
 
@@ -344,11 +369,13 @@ class NidaqApp(tk.Tk):
         dialog.transient(self)
         dialog.grab_set()
         values: dict[str, tk.StringVar] = {}
-        labels = [("ai_test", "AI TEST (NI-9206, 2번째 채널)"),
-                  ("ao_test", "AO TEST (NI-9264, 2번째 채널)"),
-                  ("feedback_ai", "Feedback PV (NI-9206, 3번째 채널)"),
-                  ("feedback_ao", "Feedback AO (NI-9264, 3번째 채널)")]
-        for row, (field, label) in enumerate(labels):
+        ttk.Label(dialog, text="MAX 기준: NI 9206=cDAQ1Mod2, NI 9264=cDAQ1Mod3",
+                  style="Panel.TLabel").grid(row=0, column=0, columnspan=2, padx=18, pady=(14, 4), sticky="w")
+        labels = [("ai_test", "AI TEST  cDAQ1Mod2/ai1 (2번째)"),
+                  ("ao_test", "AO TEST  cDAQ1Mod3/ao1 (2번째)"),
+                  ("feedback_ai", "Feedback PV  cDAQ1Mod2/ai2 (3번째)"),
+                  ("feedback_ao", "Feedback AO  cDAQ1Mod3/ao2 (3번째)")]
+        for row, (field, label) in enumerate(labels, start=1):
             ttk.Label(dialog, text=label, style="Panel.TLabel").grid(row=row, column=0, padx=18, pady=10, sticky="w")
             value = tk.StringVar(value=getattr(self.channels, field))
             values[field] = value
@@ -360,7 +387,7 @@ class NidaqApp(tk.Tk):
             dialog.destroy()
 
         ttk.Button(dialog, text="저장", style="Start.TButton", command=save).grid(
-            row=len(labels), column=0, columnspan=2, padx=18, pady=(12, 18), sticky="ew")
+            row=len(labels) + 1, column=0, columnspan=2, padx=18, pady=(12, 18), sticky="ew")
 
 
 if __name__ == "__main__":
