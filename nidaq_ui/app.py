@@ -295,20 +295,23 @@ class NidaqApp(tk.Tk):
         self.sv = self.field(controls, 6, "SV 설정값 (공정값)", "50.0")
         self.p_gain = self.field(controls, 7, "P Gain (V/공정값)", "0.10")
         self.i_gain = self.field(controls, 8, "I Gain (V/공정값·s)", "0.01")
-        self.lpf_cutoff = self.field(controls, 9, "LPF 차단 주파수 (Hz)", "2.0")
+        self.lpf_cutoff = self.field(controls, 9, "로우패스 필터 (Hz)", "2.0")
+        ttk.Label(controls, text="PV 노이즈 제거용 1차 로우패스 필터 (0=미사용)",
+                  style="Panel.TLabel", wraplength=250).grid(
+            row=10, column=0, columnspan=2, sticky="w", pady=(0, 4))
         self.pv_value = ttk.Label(controls, text="PV: 0.00", style="Value.TLabel")
-        self.pv_value.grid(row=10, column=0, columnspan=2, sticky="w", pady=(14, 2))
+        self.pv_value.grid(row=11, column=0, columnspan=2, sticky="w", pady=(14, 2))
         self.ai_voltage_value = ttk.Label(controls, text="AI 입력: 0.000 V", style="Panel.TLabel")
-        self.ai_voltage_value.grid(row=11, column=0, columnspan=2, sticky="w")
+        self.ai_voltage_value.grid(row=12, column=0, columnspan=2, sticky="w")
         self.output_value = ttk.Label(controls, text="AO 현재 출력: 0.000 V", style="Panel.TLabel")
-        self.output_value.grid(row=12, column=0, columnspan=2, sticky="w")
+        self.output_value.grid(row=13, column=0, columnspan=2, sticky="w")
         self.feedback_button = ttk.Button(controls, text="피드백 제어 시작", style="Start.TButton",
                                           command=self.toggle_feedback)
-        self.feedback_button.grid(row=13, column=0, sticky="ew", pady=(18, 0))
+        self.feedback_button.grid(row=14, column=0, sticky="ew", pady=(18, 0))
         ttk.Button(controls, text="설정 저장", command=self.save_feedback_settings).grid(
-            row=13, column=1, sticky="ew", padx=(8, 0), pady=(18, 0))
+            row=14, column=1, sticky="ew", padx=(8, 0), pady=(18, 0))
         ttk.Label(controls, text="AO = clamp(P×오차 + I×∫오차dt, 0~5V)", style="Panel.TLabel",
-                  wraplength=250).grid(row=14, column=0, columnspan=2, sticky="w", pady=(12, 0))
+                  wraplength=250).grid(row=15, column=0, columnspan=2, sticky="w", pady=(12, 0))
         graphs = ttk.Frame(page, style="App.TFrame")
         graphs.grid(row=0, column=1, sticky="nsew")
         graphs.rowconfigure((0, 1), weight=1)
@@ -406,7 +409,7 @@ class NidaqApp(tk.Tk):
             self.daq.write_voltage(self.channels.feedback_ao, output)
             unit = self.feedback_process_type.get()
             self.pv_value.configure(text=f"PV: {pv:.2f} {unit}  |  SV: {sv:.2f} {unit}")
-            self.ai_voltage_value.configure(text=f"AI 입력: {raw_voltage:.3f} V  (LPF 적용)")
+            self.ai_voltage_value.configure(text=f"AI 입력: {raw_voltage:.3f} V  (로우패스 필터 적용)")
             self.output_value.configure(text=f"AO 현재 출력: {output:.3f} V")
             self.feedback_graph.set_scale(low_p, high_p, unit)
             self.feedback_graph.add(pv, sv)
@@ -418,7 +421,7 @@ class NidaqApp(tk.Tk):
             (self.feedback_voltage_min, "AI 최소 전압"), (self.feedback_voltage_max, "AI 최대 전압"),
             (self.feedback_process_min, "공정 범위 최소"), (self.feedback_process_max, "공정 범위 최대"),
             (self.sv, "SV"), (self.p_gain, "P Gain"), (self.i_gain, "I Gain"),
-            (self.lpf_cutoff, "LPF 차단 주파수"),
+            (self.lpf_cutoff, "로우패스 필터"),
         ]
         values = {label: self.number(variable, label) for variable, label in fields}
         if any(value is None for value in values.values()):
@@ -432,8 +435,8 @@ class NidaqApp(tk.Tk):
         if not 0 <= values["AI 최소 전압"] < values["AI 최대 전압"] <= 5:
             messagebox.showerror("범위 오류", "AI 전압 범위는 0.0 ~ 5.0 V 안에 있어야 합니다.")
             return False
-        if values["P Gain"] < 0 or values["I Gain"] < 0 or values["LPF 차단 주파수"] < 0:
-            messagebox.showerror("입력 오류", "P Gain, I Gain, LPF 값은 0 이상이어야 합니다.")
+        if values["P Gain"] < 0 or values["I Gain"] < 0 or values["로우패스 필터"] < 0:
+            messagebox.showerror("입력 오류", "P Gain, I Gain, 로우패스 필터 값은 0 이상이어야 합니다.")
             return False
         return True
 
