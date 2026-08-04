@@ -175,7 +175,7 @@ class FlowControlApp(tk.Tk):
         self.lpf = LowPassFilter()
         self.pi = PIController(0.0, 5.0)
 
-        self.active_page = "monitor"
+        self.active_page = "feedback"
         self.monitor_running = False
         self.feedback_running = False
         self.level_running = False
@@ -188,7 +188,7 @@ class FlowControlApp(tk.Tk):
         self._build_style()
         self._build_layout()
         self.load_settings()
-        self.show_page("monitor")
+        self.show_page("feedback")
         self.refresh_connection()
         self.after(self.POLL_MS, self.update_loop)
         self.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -283,6 +283,12 @@ class FlowControlApp(tk.Tk):
 
         status = ttk.Frame(header, style="App.TFrame")
         status.pack(side="right")
+        ttk.Button(status, text="유량 모니터", style="Nav.TButton", command=lambda: self.show_page("monitor")).pack(
+            side="right", padx=(0, 6)
+        )
+        ttk.Button(status, text="AO 수동 출력", style="Nav.TButton", command=lambda: self.show_page("ao")).pack(
+            side="right", padx=(0, 12)
+        )
         self.status_canvas = tk.Canvas(
             status, width=18, height=18, bg=COLORS["bg"], highlightthickness=0
         )
@@ -296,12 +302,7 @@ class FlowControlApp(tk.Tk):
         nav = ttk.Frame(self, style="App.TFrame", padding=(28, 8, 28, 10))
         nav.pack(fill="x")
         self.nav_buttons: dict[str, ttk.Button] = {}
-        for key, label in (
-            ("monitor", "유량 모니터"),
-            ("ao", "AO 수동 출력"),
-            ("feedback", "유량 피드백 제어"),
-            ("level", "레벨 / 밸브 제어"),
-        ):
+        for key, label in (("feedback", "통합 제어 홈"),):
             button = ttk.Button(nav, text=label, style="Nav.TButton", command=lambda k=key: self.show_page(k))
             button.pack(side="left", fill="x", expand=True, padx=4)
             self.nav_buttons[key] = button
@@ -312,7 +313,6 @@ class FlowControlApp(tk.Tk):
             "monitor": self._create_monitor_page(),
             "ao": self._create_ao_page(),
             "feedback": self._create_feedback_page(),
-            "level": self._create_level_page(),
         }
 
         footer = ttk.Frame(self, style="App.TFrame", padding=(28, 0, 28, 16))
@@ -427,10 +427,11 @@ class FlowControlApp(tk.Tk):
         page = ttk.Frame(self.content, style="App.TFrame")
         page.columnconfigure(1, weight=1)
         page.rowconfigure(0, weight=1)
+        page.rowconfigure(1, weight=0)
 
         controls = self.panel(page)
         self.place_panel(controls, row=0, column=0, sticky="nsw", padx=(0, 14))
-        ttk.Label(controls, text="유량 피드백 제어", style="PanelTitle.TLabel").grid(
+        ttk.Label(controls, text="유량 피드백 제어 (메인)", style="PanelTitle.TLabel").grid(
             row=0, column=0, columnspan=2, sticky="w", pady=(0, 10)
         )
 
@@ -474,11 +475,59 @@ class FlowControlApp(tk.Tk):
             200,
             "cc/min",
         )
+        self.feedback_graph.configure(height=110)
         self.feedback_graph.grid(row=0, column=0, sticky="nsew", pady=(0, 8))
         self.feedback_ao_graph = TrendGraph(
             graphs, "AO 펌프 전압", [("AO", COLORS["ao"])], 0, 5, "V"
         )
+        self.feedback_ao_graph.configure(height=110)
         self.feedback_ao_graph.grid(row=1, column=0, sticky="nsew")
+
+        level_section = self.panel(page)
+        self.place_panel(level_section, row=1, column=0, columnspan=2, sticky="nsew", pady=(12, 0))
+        top = ttk.Frame(level_section, style="Panel.TFrame")
+        top.pack(fill="x")
+        ttk.Label(top, text="레벨 / 밸브 자동 제어", style="PanelTitle.TLabel").pack(side="left")
+        self.level_button = ttk.Button(
+            top, text="자동 제어 시작", style="Start.TButton", command=self.toggle_level_control
+        )
+        self.level_button.pack(side="right")
+        self.level_master_status = ttk.Label(
+            top, text="정지 · 모든 밸브 닫힘 명령", style="Panel.TLabel"
+        )
+        self.level_master_status.pack(side="right", padx=16)
+
+        cards = ttk.Frame(level_section, style="Panel.TFrame")
+        cards.pack(fill="x", pady=(12, 0))
+        for i in range(3):
+            cards.columnconfigure(i, weight=1)
+
+        self.level_high_labels = []
+        self.level_low_labels = []
+        self.valve_status_labels = []
+        self.level_logic_labels = []
+        definitions = (
+            ("밸브 1 · 급수", "LOW→열림 / HIGH→닫힘"),
+            ("밸브 2 · 배수", "LOW→닫힘 / HIGH→열림"),
+            ("밸브 3 · 배수", "LOW→닫힘 / HIGH→열림"),
+        )
+        for index, (name, rule) in enumerate(definitions):
+            card = ttk.Frame(cards, style="Panel.TFrame", padding=(12, 8))
+            card.grid(row=0, column=index, sticky="nsew", padx=(0 if index == 0 else 8, 0))
+            ttk.Label(card, text=name, style="PanelTitle.TLabel").pack(anchor="w")
+            ttk.Label(card, text=rule, style="Hint.TLabel").pack(anchor="w", pady=(2, 8))
+            high = ttk.Label(card, text="● HIGH OFF", style="Panel.TLabel")
+            high.pack(anchor="w")
+            low = ttk.Label(card, text="● LOW  OFF", style="Panel.TLabel")
+            low.pack(anchor="w", pady=(2, 8))
+            valve = ttk.Label(card, text="닫힘 명령", style="ValueSmall.TLabel")
+            valve.pack(anchor="w")
+            logic = ttk.Label(card, text="대기", style="Panel.TLabel")
+            logic.pack(anchor="w", pady=(4, 0))
+            self.level_high_labels.append(high)
+            self.level_low_labels.append(low)
+            self.valve_status_labels.append(valve)
+            self.level_logic_labels.append(logic)
         return page
 
     def _create_level_page(self) -> ttk.Frame:
@@ -550,9 +599,10 @@ class FlowControlApp(tk.Tk):
         self.active_page = page
         for name, frame in self.pages.items():
             frame.pack_forget()
-            self.nav_buttons[name].configure(
-                style="NavActive.TButton" if name == page else "Nav.TButton"
-            )
+            if name in self.nav_buttons:
+                self.nav_buttons[name].configure(
+                    style="NavActive.TButton" if name == page else "Nav.TButton"
+                )
         self.pages[page].pack(fill="both", expand=True)
 
     def number(self, variable: tk.StringVar, label: str) -> float | None:
