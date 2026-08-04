@@ -437,7 +437,9 @@ class FlowControlApp(tk.Tk):
 
     def _create_feedback_page(self) -> ttk.Frame:
         page = ttk.Frame(self.content, style="App.TFrame")
-        page.columnconfigure(1, weight=1)
+        page.columnconfigure(0, weight=0)
+        page.columnconfigure(1, weight=0)
+        page.columnconfigure(2, weight=1)
         page.rowconfigure(0, weight=1)
         page.rowconfigure(1, weight=0)
 
@@ -475,8 +477,20 @@ class FlowControlApp(tk.Tk):
             justify="left",
         ).grid(row=15, column=0, columnspan=2, sticky="w", pady=(12, 0))
 
-        graphs = ttk.Frame(page, style="App.TFrame")
-        graphs.grid(row=0, column=1, sticky="nsew")
+        focus = self.panel(page)
+        self.place_panel(focus, row=0, column=1, sticky="ns", padx=(0, 10))
+        ttk.Label(focus, text="현재값 집중 보기", style="PanelTitle.TLabel").pack(anchor="w", pady=(0, 8))
+        self.focus_pv = ttk.Label(focus, text="PV\n0.0 cc/min", style="Value.TLabel", justify="center")
+        self.focus_pv.pack(fill="x", pady=(8, 12))
+        self.focus_sv = ttk.Label(focus, text="SV\n0.0 cc/min", style="Value.TLabel", justify="center")
+        self.focus_sv.pack(fill="x", pady=(0, 12))
+        self.focus_err = ttk.Label(focus, text="오차: 0.0 cc/min", style="ValueSmall.TLabel")
+        self.focus_err.pack(anchor="w", pady=(0, 8))
+        ttk.Label(focus, text="그래프보다 현재값 중심 표시", style="Hint.TLabel").pack(anchor="w")
+
+        graphs = ttk.Frame(page, style="App.TFrame", width=330)
+        graphs.grid(row=0, column=2, sticky="nsew")
+        graphs.grid_propagate(False)
         graphs.rowconfigure((0, 1), weight=1)
         graphs.columnconfigure(0, weight=1)
         self.feedback_graph = TrendGraph(
@@ -487,16 +501,16 @@ class FlowControlApp(tk.Tk):
             200,
             "cc/min",
         )
-        self.feedback_graph.configure(height=110)
+        self.feedback_graph.configure(height=96)
         self.feedback_graph.grid(row=0, column=0, sticky="nsew", pady=(0, 8))
         self.feedback_ao_graph = TrendGraph(
             graphs, "AO 펌프 전압", [("AO", COLORS["ao"])], 0, 5, "V"
         )
-        self.feedback_ao_graph.configure(height=110)
+        self.feedback_ao_graph.configure(height=96)
         self.feedback_ao_graph.grid(row=1, column=0, sticky="nsew")
 
         level_section = self.panel(page)
-        self.place_panel(level_section, row=1, column=0, columnspan=2, sticky="nsew", pady=(12, 0))
+        self.place_panel(level_section, row=1, column=0, columnspan=3, sticky="nsew", pady=(12, 0))
         top = ttk.Frame(level_section, style="Panel.TFrame")
         top.pack(fill="x")
         ttk.Label(top, text="레벨 / 밸브 자동 제어", style="PanelTitle.TLabel").pack(side="left")
@@ -1224,6 +1238,9 @@ class FlowControlApp(tk.Tk):
 
         hz_text = "—" if math.isnan(hz) else f"{hz:.2f}"
         self.pv_value.configure(text=f"PV: {pv:.1f} cc/min")
+        self.focus_pv.configure(text=f"PV\n{pv:.1f} cc/min")
+        self.focus_sv.configure(text=f"SV\n{sv:.1f} cc/min")
+        self.focus_err.configure(text=f"오차: {sv - pv:+.1f} cc/min")
         if self.mp5y_config.value_mode == "flow_ccpm":
             self.fb_hz.configure(text=f"MP5Y 표시: {raw_flow:.2f} cc/min")
         else:
