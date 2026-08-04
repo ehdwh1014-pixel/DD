@@ -221,7 +221,10 @@ class FlowControlApp(tk.Tk):
         self._build_layout()
         self.load_settings()
         self.show_page("feedback")
+        self._link_ok = False
+        self._status_base_color = COLORS["bad"]
         self.refresh_connection()
+        self.after(400, self._blink_status_lamp)
         self.after(self.POLL_MS, self.update_loop)
         self.protocol("WM_DELETE_WINDOW", self.on_close)
 
@@ -419,12 +422,6 @@ class FlowControlApp(tk.Tk):
         title_style = "TouchTitle.TLabel" if self.touch_mode else "Title.TLabel"
         title_text = "PROCESS CONTROL" if self.touch_mode else "PROCESS CONTROL DASHBOARD"
         ttk.Label(titles, text=title_text, style=title_style).pack(anchor="w")
-        if not self.touch_mode:
-            ttk.Label(
-                titles,
-                text="MP5Y-25 유량(cc/min)  ·  NI 9264 AO  ·  프리스케일 27.6",
-                style="Sub.TLabel",
-            ).pack(anchor="w", pady=(2, 0))
 
         status = ttk.Frame(header, style="App.TFrame")
         status.pack(side="right")
@@ -441,21 +438,20 @@ class FlowControlApp(tk.Tk):
                 style="Nav.TButton",
                 command=self.open_ao_popup,
             ).pack(side="right", padx=(0, 12))
+        # Large blinking DAQ / MP5Y link lamp — kept bigger than the old 12px dot.
         self.status_canvas = tk.Canvas(
-            status, width=18, height=18, bg=COLORS["bg"], highlightthickness=0
+            status, width=28, height=28, bg=COLORS["bg"], highlightthickness=0
         )
-        self.status_canvas.pack(side="right", padx=(8, 0))
-        self.status_dot = self.status_canvas.create_oval(3, 3, 15, 15, fill=COLORS["bad"], outline="")
+        self.status_canvas.pack(side="right", padx=(10, 0))
+        self.status_dot = self.status_canvas.create_oval(
+            3, 3, 25, 25, fill=COLORS["bad"], outline="#9B2C2C", width=2
+        )
         self.status_label = ttk.Label(status, text="통신 확인 중", style="Sub.TLabel")
         self.status_label.pack(side="right")
-        if not self.touch_mode:
-            ttk.Button(status, text="채널 설정", command=self.open_settings).pack(
-                side="right", padx=(8, 12)
-            )
 
         self.nav_buttons: dict[str, ttk.Button] = {}
 
-        content_padding = (8, 2, 8, 4) if self.touch_mode else (18, 4, 18, 8)
+        content_padding = (8, 2, 8, 4) if self.touch_mode else (14, 4, 14, 8)
         self.content = ttk.Frame(self, style="App.TFrame", padding=content_padding)
         self.content.pack(fill="both", expand=True)
         self.pages = {
@@ -463,12 +459,6 @@ class FlowControlApp(tk.Tk):
             "ao": self._create_ao_page(),
             "feedback": self._create_feedback_page(),
         }
-
-        footer_padding = (10, 0, 10, 2) if self.touch_mode else (18, 0, 18, 6)
-        footer = ttk.Frame(self, style="App.TFrame", padding=footer_padding)
-        footer.pack(fill="x")
-        self.device_label = ttk.Label(footer, text="", style="Sub.TLabel")
-        self.device_label.pack(anchor="w")
 
     def panel(self, parent: tk.Misc) -> ttk.Frame:
         wrapper = tk.Frame(parent, bg=COLORS["border"], padx=1, pady=1)
@@ -816,7 +806,7 @@ class FlowControlApp(tk.Tk):
             low = ttk.Label(card, text="●  LOW    OFF", style="ValueSmall.TLabel")
             low.pack(anchor="w", pady=5)
             ttk.Separator(card, orient="horizontal").pack(fill="x", pady=12)
-            valve = ttk.Label(card, text="닫힘 명령", style="TouchSV.TLabel")
+            valve = ttk.Label(card, text="닫힘", style="TouchSV.TLabel")
             valve.pack(anchor="w")
             logic = ttk.Label(card, text="DAQ 연결 대기", style="Panel.TLabel")
             logic.pack(anchor="w", pady=(8, 0))
@@ -833,40 +823,35 @@ class FlowControlApp(tk.Tk):
         card = self.panel(section)
         self.place_panel(card, row=0, column=0, sticky="nsew")
 
-        ttk.Label(card, text="화염 감지 / 점화기", style="PanelTitle.TLabel").pack(anchor="w")
+        ttk.Label(card, text="FD / IGN", style="PanelTitle.TLabel").pack(anchor="w")
         center = ttk.Frame(card, style="Panel.TFrame")
         center.pack(expand=True)
         self.flame_canvas = tk.Canvas(
-            center, width=150, height=150, bg=COLORS["panel"], highlightthickness=0
+            center, width=120, height=120, bg=COLORS["panel"], highlightthickness=0
         )
-        self.flame_canvas.pack(side="left", padx=(0, 28))
+        self.flame_canvas.pack(side="left", padx=(0, 18))
         self.flame_ring = self.flame_canvas.create_oval(
-            5, 5, 145, 145, fill="#F1F5F9", outline="#CBD5E1", width=5
+            5, 5, 115, 115, fill="#F1F5F9", outline="#CBD5E1", width=4
         )
         self.flame_lamp = self.flame_canvas.create_oval(
-            32, 32, 118, 118, fill="#CBD5E1", outline="#94A3B8", width=4
+            28, 28, 92, 92, fill="#CBD5E1", outline="#94A3B8", width=3
         )
         controls = ttk.Frame(center, style="Panel.TFrame")
         controls.pack(side="left")
-        ttk.Label(controls, text="IFW15 FLAME STATUS", style="Hint.TLabel").pack(anchor="w")
-        self.flame_label = ttk.Label(
-            controls, text="SENSOR OFFLINE", style="TouchSV.TLabel"
-        )
-        self.flame_label.pack(anchor="w", pady=(4, 20))
+        self.flame_label = ttk.Label(controls, text="FD", style="TouchSV.TLabel")
+        self.flame_label.pack(anchor="w", pady=(0, 14))
+        ign_row = ttk.Frame(controls, style="Panel.TFrame")
+        ign_row.pack(anchor="w")
         self.igniter_button = ttk.Button(
-            controls,
-            text="점화기 OFF",
+            ign_row,
+            text="",
             style="TouchStop.TButton",
             command=self.toggle_igniter,
-            width=20,
+            width=4,
         )
-        self.igniter_button.pack(fill="x")
-        ttk.Label(
-            controls,
-            text="화염 감지: NI 9422 DI6\n점화 SSR: NI 9477 DO3",
-            style="Panel.TLabel",
-            justify="left",
-        ).pack(anchor="w", pady=(18, 0))
+        self.igniter_button.pack(side="left")
+        self.igniter_caption = ttk.Label(ign_row, text="IGN", style="TouchSV.TLabel")
+        self.igniter_caption.pack(side="left", padx=(8, 0))
         return section
 
     def _create_desktop_feedback_page(self) -> ttk.Frame:
@@ -907,14 +892,16 @@ class FlowControlApp(tk.Tk):
 
         ttk.Label(focus, text="SV 목표 유량 (cc/min)", style="Panel.TLabel").pack(anchor="w")
         self.sv = tk.StringVar(value="120.0")
+        sv_row = ttk.Frame(focus, style="Panel.TFrame")
+        sv_row.pack(anchor="w", pady=(3, 6))
         self.sv_entry = ttk.Entry(
-            focus,
+            sv_row,
             textvariable=self.sv,
             style="Highlight.TEntry",
             justify="center",
-            width=10,
+            width=8,
         )
-        self.sv_entry.pack(fill="x", pady=(3, 6))
+        self.sv_entry.pack(side="left")
         # Kept as hidden update targets; the compact desktop card intentionally
         # shows only PV, editable SV, flame state, and ignition control.
         self.focus_err = ttk.Label(focus, text="오차: 0.0 cc/min", style="ValueSmall.TLabel")
@@ -923,29 +910,29 @@ class FlowControlApp(tk.Tk):
 
         ttk.Separator(focus, orient="horizontal").pack(fill="x", pady=(7, 7))
         flame_row = ttk.Frame(focus, style="Panel.TFrame")
-        flame_row.pack(fill="x")
+        flame_row.pack(anchor="w")
         self.flame_canvas = tk.Canvas(
-            flame_row, width=46, height=46, bg=COLORS["panel"], highlightthickness=0
+            flame_row, width=34, height=34, bg=COLORS["panel"], highlightthickness=0
         )
         self.flame_canvas.pack(side="left")
         self.flame_ring = self.flame_canvas.create_oval(
-            3, 3, 43, 43, fill="#F1F5F9", outline="#CBD5E1", width=2
+            2, 2, 32, 32, fill="#F1F5F9", outline="#CBD5E1", width=2
         )
         self.flame_lamp = self.flame_canvas.create_oval(
-            11, 11, 35, 35, fill="#CBD5E1", outline="#94A3B8", width=2
+            8, 8, 26, 26, fill="#CBD5E1", outline="#94A3B8", width=2
         )
-        self.flame_label = ttk.Label(
-            flame_row, text="SENSOR OFFLINE", style="FlameStatus.TLabel"
-        )
-        self.flame_label.pack(side="left", padx=(7, 8))
+        self.flame_label = ttk.Label(flame_row, text="FD", style="FlameStatus.TLabel")
+        self.flame_label.pack(side="left", padx=(6, 14))
         self.igniter_button = ttk.Button(
             flame_row,
-            text="점화기 OFF",
+            text="",
             style="Compact.TButton",
             command=self.toggle_igniter,
-            width=9,
+            width=3,
         )
-        self.igniter_button.pack(side="right")
+        self.igniter_button.pack(side="left")
+        self.igniter_caption = ttk.Label(flame_row, text="IGN", style="FlameStatus.TLabel")
+        self.igniter_caption.pack(side="left", padx=(6, 0))
 
         graphs = ttk.Frame(page, style="App.TFrame", width=292)
         graphs.grid(row=0, column=2, sticky="ns")
@@ -1001,7 +988,7 @@ class FlowControlApp(tk.Tk):
             high.pack(anchor="w")
             low = ttk.Label(card, text="● LOW  OFF", style="Panel.TLabel")
             low.pack(anchor="w", pady=(1, 4))
-            valve = ttk.Label(card, text="닫힘 명령", style="ValueSmall.TLabel")
+            valve = ttk.Label(card, text="닫힘", style="ValueSmall.TLabel")
             valve.pack(anchor="w")
             logic = ttk.Label(card, text="대기", style="Panel.TLabel")
             logic.pack(anchor="w", pady=(2, 0))
@@ -1652,26 +1639,48 @@ class FlowControlApp(tk.Tk):
         self.mp5y.close()
 
         connected = ao_ok or level_ok or mp_ok
-        self.status_on = not self.status_on if connected else False
+        self._link_ok = connected
         if ao_ok and level_ok and mp_ok:
-            color = COLORS["ok"] if self.status_on else "#A8D8C0"
-            text = "MP5Y + NI 9264/9422/9477 연결됨"
+            self._status_base_color = COLORS["ok"]
+            text = "MP5Y + NI 연결됨"
         elif mp_ok and ao_ok:
-            color = COLORS["warn"]
-            text = "유량/AO OK · 레벨 I/O 확인 필요"
+            self._status_base_color = COLORS["warn"]
+            text = "유량/AO OK · 레벨 I/O 확인"
         elif mp_ok:
-            color = COLORS["warn"]
+            self._status_base_color = COLORS["warn"]
             text = f"MP5Y OK / NI: {self.daq.error}"
         else:
-            color = COLORS["bad"]
+            self._status_base_color = COLORS["bad"]
             text = "연결 확인 필요 (COM3 / NI)"
 
-        self.status_canvas.itemconfigure(self.status_dot, fill=color)
+        if not connected:
+            self.status_on = False
+            self._paint_status_lamp(COLORS["bad"], outline="#9B2C2C")
         self.status_label.configure(text=text)
-        self.device_label.configure(
-            text=f"{self.mp5y.device_summary}  |  {self.daq.device_summary}"
-        )
         self.after(2000, self.refresh_connection)
+
+    def _blink_status_lamp(self) -> None:
+        """Blink the large DAQ/link lamp so connection state is obvious."""
+        if self._link_ok:
+            self.status_on = not self.status_on
+            if self._status_base_color == COLORS["ok"]:
+                color = COLORS["ok"] if self.status_on else "#A8D8C0"
+                outline = "#1F7A4D" if self.status_on else "#7FB89A"
+            elif self._status_base_color == COLORS["warn"]:
+                color = COLORS["warn"] if self.status_on else "#F2D19A"
+                outline = "#B7791F" if self.status_on else "#D6B27A"
+            else:
+                color = self._status_base_color
+                outline = "#9B2C2C"
+            self._paint_status_lamp(color, outline=outline)
+        self.after(400, self._blink_status_lamp)
+
+    def _paint_status_lamp(self, color: str, outline: str = "") -> None:
+        self.status_canvas.itemconfigure(
+            self.status_dot,
+            fill=color,
+            outline=outline or color,
+        )
 
     def update_loop(self) -> None:
         try:
@@ -1689,7 +1698,8 @@ class FlowControlApp(tk.Tk):
         self.after(self.POLL_MS, self.update_loop)
 
     def _show_hardware_error(self, error: Exception) -> None:
-        self.status_canvas.itemconfigure(self.status_dot, fill=COLORS["bad"])
+        self._link_ok = False
+        self._paint_status_lamp(COLORS["bad"], outline="#9B2C2C")
         self.status_label.configure(text=str(error))
         messagebox.showerror("하드웨어 오류", str(error))
 
@@ -1718,14 +1728,12 @@ class FlowControlApp(tk.Tk):
             style="TouchStart.TButton" if self.touch_mode else "Start.TButton",
         )
         if hasattr(self, "igniter_button"):
-            self.igniter_button.configure(
-                text="점화기 OFF",
-                style="TouchStop.TButton" if self.touch_mode else "Compact.TButton",
-            )
-        self.level_master_status.configure(text="안전 정지 · 모든 밸브 닫힘 명령")
+            self._set_igniter_button(False)
+        self.level_master_status.configure(text="안전 정지 · 모든 밸브 닫힘")
         self._render_level_states([False] * 6, ["오류 · 안전 닫힘"] * 3)
         self.output_value.configure(text=f"AO: {self.current_ao:.3f} V")
-        self.status_canvas.itemconfigure(self.status_dot, fill=COLORS["bad"])
+        self._link_ok = False
+        self._paint_status_lamp(COLORS["bad"], outline="#9B2C2C")
         self.status_label.configure(text=f"안전 정지: {error}{stop_error}")
 
     def toggle_igniter(self) -> None:
@@ -1746,21 +1754,21 @@ class FlowControlApp(tk.Tk):
         except DaqError as exc:
             self.igniter_on = False
             self._show_hardware_error(exc)
+            self._set_igniter_button(False)
             return
-        self.igniter_button.configure(
-            text=f"점화기 {'ON' if self.igniter_on else 'OFF'}",
-            style=(
-                "TouchStart.TButton"
-                if self.touch_mode and self.igniter_on
-                else "TouchStop.TButton"
-                if self.touch_mode
-                else "Compact.TButton"
-            ),
-        )
+        self._set_igniter_button(self.igniter_on)
+
+    def _set_igniter_button(self, on: bool) -> None:
+        if self.touch_mode:
+            style = "TouchStart.TButton" if on else "TouchStop.TButton"
+        else:
+            style = "Start.TButton" if on else "Compact.TButton"
+        self.igniter_button.configure(text="", style=style)
 
     def _update_flame_status(self) -> None:
+        self.flame_label.configure(text="FD")
         if not self.daq.level_available:
-            self.flame_label.configure(text="SENSOR OFFLINE", foreground=COLORS["muted"])
+            self.flame_label.configure(foreground=COLORS["muted"])
             self.flame_canvas.itemconfigure(
                 self.flame_ring, fill="#F1F5F9", outline="#CBD5E1"
             )
@@ -1770,9 +1778,9 @@ class FlowControlApp(tk.Tk):
             return
         try:
             flame = self.daq.read_flame()
-        except DaqError as exc:
+        except DaqError:
             # Don't hard-fail the loop for a single DI read.
-            self.flame_label.configure(text="SENSOR FAULT", foreground=COLORS["bad"])
+            self.flame_label.configure(foreground=COLORS["bad"])
             self.flame_canvas.itemconfigure(
                 self.flame_ring, fill="#FCE8E8", outline=COLORS["bad"]
             )
@@ -1781,7 +1789,6 @@ class FlowControlApp(tk.Tk):
             )
             return
         self.flame_label.configure(
-            text="FLAME ON · 감지" if flame else "NO FLAME · 대기",
             foreground=COLORS["warn"] if flame else COLORS["muted"],
         )
         self.flame_canvas.itemconfigure(
@@ -1827,7 +1834,7 @@ class FlowControlApp(tk.Tk):
                 foreground=COLORS["warn"] if low else COLORS["muted"],
             )
             self.valve_status_labels[index].configure(
-                text="열림 명령" if opened else "닫힘 명령",
+                text="열림" if opened else "닫힘",
                 foreground=COLORS["ok"] if opened else COLORS["accent_deep"],
             )
             self.level_logic_labels[index].configure(text=states[index])
