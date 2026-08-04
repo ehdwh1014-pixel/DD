@@ -183,6 +183,8 @@ class FlowControlApp(tk.Tk):
         self.monitor_running = False
         self.feedback_running = False
         self.level_running = False
+        self._monitor_popup: tk.Toplevel | None = None
+        self._ao_popup: tk.Toplevel | None = None
         self.valve_commands = [False, False, False]
         self.status_on = False
         self.current_ao = 0.0
@@ -287,12 +289,18 @@ class FlowControlApp(tk.Tk):
 
         status = ttk.Frame(header, style="App.TFrame")
         status.pack(side="right")
-        ttk.Button(status, text="유량 모니터", style="Nav.TButton", command=lambda: self.show_page("monitor")).pack(
-            side="right", padx=(0, 6)
-        )
-        ttk.Button(status, text="AO 수동 출력", style="Nav.TButton", command=lambda: self.show_page("ao")).pack(
-            side="right", padx=(0, 12)
-        )
+        ttk.Button(
+            status,
+            text="유량계 TEST",
+            style="Nav.TButton",
+            command=self.open_monitor_popup,
+        ).pack(side="right", padx=(0, 6))
+        ttk.Button(
+            status,
+            text="펌프 TEST",
+            style="Nav.TButton",
+            command=self.open_ao_popup,
+        ).pack(side="right", padx=(0, 12))
         self.status_canvas = tk.Canvas(
             status, width=18, height=18, bg=COLORS["bg"], highlightthickness=0
         )
@@ -608,6 +616,153 @@ class FlowControlApp(tk.Tk):
                     style="NavActive.TButton" if name == page else "Nav.TButton"
                 )
         self.pages[page].pack(fill="both", expand=True)
+
+    # ---------------------------------------------------------- popup UI
+    def open_monitor_popup(self) -> None:
+        """Open MP5Y -> 유량 테스트 window."""
+        # If already open, bring to front.
+        if self._monitor_popup is not None and self._monitor_popup.winfo_exists():
+            self._monitor_popup.lift()
+            self._monitor_popup.focus_force()
+            return
+
+        popup = tk.Toplevel(self)
+        self._monitor_popup = popup
+        popup.title("유량계 TEST (MP5Y)")
+        popup.configure(bg=COLORS["bg"])
+        # Small-screen safe sizing
+        screen_w = max(self.winfo_screenwidth(), 1024)
+        screen_h = max(self.winfo_screenheight(), 700)
+        w = min(980, int(screen_w * 0.7))
+        h = min(680, int(screen_h * 0.7))
+        popup.geometry(f"{w}x{h}")
+
+        frame = ttk.Frame(popup, style="App.TFrame", padding=16)
+        frame.pack(fill="both", expand=True)
+
+        ttk.Label(frame, text="유량계 TEST", style="PanelTitle.TLabel").pack(anchor="w", pady=(0, 10))
+
+        body = ttk.Frame(frame, style="App.TFrame")
+        body.pack(fill="both", expand=True)
+        body.columnconfigure(1, weight=1)
+        body.rowconfigure(0, weight=1)
+
+        controls = self.panel(body)
+        self.place_panel(controls, row=0, column=0, sticky="nsw", padx=(0, 14))
+
+        # Controls (pulse constant only affects UI if you later switch modes)
+        self.pulse_ml = self.field(controls, 1, "펄스정수 (ml/P)", "0.46")
+        self.decimal_places = self.field(
+            controls, 3, "소수점 자리", "auto", "auto 또는 0~4 (MP5Y 값과 다르면)"
+        )
+
+        self.mon_flow = ttk.Label(controls, text="0.0 cc/min", style="Value.TLabel")
+        self.mon_flow.grid(row=5, column=0, columnspan=2, sticky="w", pady=(18, 4))
+
+        self.mon_hz = ttk.Label(controls, text="MP5Y 표시: 0.00 cc/min", style="ValueSmall.TLabel")
+        self.mon_hz.grid(row=6, column=0, columnspan=2, sticky="w")
+
+        self.mon_conv = ttk.Label(
+            controls,
+            text="환산: MP5Y 프리스케일 27.6 사용 (이중환산 없음)",
+            style="Panel.TLabel",
+        )
+        self.mon_conv.grid(row=7, column=0, columnspan=2, sticky="w", pady=(4, 0))
+
+        self.mon_raw = ttk.Label(controls, text="MP5Y raw: 0", style="Panel.TLabel")
+        self.mon_raw.grid(row=8, column=0, columnspan=2, sticky="w", pady=(6, 0))
+
+        self.mon_mode = ttk.Label(controls, text="모드: -", style="Panel.TLabel")
+        self.mon_mode.grid(row=9, column=0, columnspan=2, sticky="w", pady=(4, 0))
+
+        self.monitor_button = ttk.Button(
+            controls, text="측정 시작", style="Start.TButton", command=self.toggle_monitor
+        )
+        self.monitor_button.grid(row=10, column=0, columnspan=2, sticky="ew", pady=(22, 0))
+
+        ttk.Label(
+            controls,
+            text="유량계 → MP5Y(통신) → PV(cc/min) 표시\n"
+            "※ 자동 제어와 별개입니다.",
+            style="Hint.TLabel",
+            wraplength=250,
+            justify="left",
+        ).grid(row=11, column=0, columnspan=2, sticky="w", pady=(12, 0))
+
+        graphs = ttk.Frame(body, style="App.TFrame")
+        graphs.grid(row=0, column=1, sticky="nsew")
+        graphs.rowconfigure(0, weight=1)
+        graphs.columnconfigure(0, weight=1)
+
+        self.mon_flow_graph = TrendGraph(graphs, "유량 추이", [("Flow", COLORS["pv"])], 0, 200, "cc/min")
+        self.mon_flow_graph.grid(row=0, column=0, sticky="nsew")
+
+        popup.protocol("WM_DELETE_WINDOW", self._close_monitor_popup)
+
+    def _close_monitor_popup(self) -> None:
+        try:
+            if self.monitor_running:
+                self.toggle_monitor()
+        finally:
+            if self._monitor_popup is not None and self._monitor_popup.winfo_exists():
+                self._monitor_popup.destroy()
+            self._monitor_popup = None
+
+    def open_ao_popup(self) -> None:
+        """Open NI 9264 AO manual test window."""
+        if self._ao_popup is not None and self._ao_popup.winfo_exists():
+            self._ao_popup.lift()
+            self._ao_popup.focus_force()
+            return
+
+        popup = tk.Toplevel(self)
+        self._ao_popup = popup
+        popup.title("펌프 수동 전압 TEST (NI 9264 AO)")
+        popup.configure(bg=COLORS["bg"])
+
+        screen_w = max(self.winfo_screenwidth(), 1024)
+        screen_h = max(self.winfo_screenheight(), 700)
+        w = min(820, int(screen_w * 0.65))
+        h = min(520, int(screen_h * 0.65))
+        popup.geometry(f"{w}x{h}")
+
+        frame = ttk.Frame(popup, style="App.TFrame", padding=16)
+        frame.pack(fill="both", expand=True)
+
+        ttk.Label(frame, text="펌프 수동 전압 TEST", style="PanelTitle.TLabel").pack(
+            anchor="w", pady=(0, 10)
+        )
+
+        controls = self.panel(frame)
+        controls.pack(fill="both", expand=True)
+
+        self.ao_voltage = self.field(controls, 1, "출력 전압 (V)", "0.0", "범위 0.0 ~ 5.0 V")
+        ttk.Button(
+            controls, text="전압 출력", style="Start.TButton", command=self.output_ao
+        ).grid(row=3, column=0, columnspan=2, sticky="ew", pady=(16, 0))
+        ttk.Button(
+            controls, text="0 V (정지)", style="Stop.TButton", command=self.zero_ao
+        ).grid(row=4, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+
+        self.ao_value = ttk.Label(controls, text="현재 출력: 0.000 V", style="Value.TLabel")
+        self.ao_value.grid(row=5, column=0, columnspan=2, sticky="w", pady=(22, 0))
+
+        self.ao_graph = TrendGraph(frame, "AO 출력 추이", [("AO", COLORS["ao"])], 0, 5, "V")
+        self.ao_graph.pack(fill="both", expand=True, pady=(12, 0))
+
+        popup.protocol("WM_DELETE_WINDOW", self._close_ao_popup)
+
+    def _close_ao_popup(self) -> None:
+        try:
+            # Always stop pump command when closing the manual window.
+            try:
+                self.daq.write_voltage(0.0)
+            except DaqError:
+                pass
+        finally:
+            if self._ao_popup is not None and self._ao_popup.winfo_exists():
+                self._ao_popup.destroy()
+            self._ao_popup = None
 
     def number(self, variable: tk.StringVar, label: str) -> float | None:
         try:
