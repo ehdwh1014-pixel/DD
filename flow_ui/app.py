@@ -330,6 +330,20 @@ class FlowControlApp(tk.Tk):
             borderwidth=1,
         )
         style.configure(
+            "Highlight.TEntry",
+            fieldbackground=COLORS["accent_soft"],
+            foreground=COLORS["accent_deep"],
+            insertcolor=COLORS["accent_deep"],
+            font=("Segoe UI", 17, "bold"),
+            padding=9,
+            borderwidth=2,
+        )
+        style.map(
+            "Highlight.TEntry",
+            fieldbackground=[("focus", "#C7E7EC")],
+            bordercolor=[("focus", COLORS["accent"])],
+        )
+        style.configure(
             "TouchTitle.TLabel",
             background=COLORS["bg"],
             foreground=COLORS["title"],
@@ -871,24 +885,21 @@ class FlowControlApp(tk.Tk):
         )
 
         self.fb_pulse_ml = self.field(controls, 1, "펄스정수 (ml/P)", "0.46")
-        self.sv = self.field(controls, 3, "SV 목표 유량 (cc/min)", "120.0")
-        self.p_gain = self.field(controls, 5, "P Gain (V·min/cc)", "0.020")
-        self.i_gain = self.field(controls, 7, "I Gain (V·min/cc·s)", "0.005")
-        self.lpf_cutoff = self.field(controls, 9, "LPF 차단주파수 (Hz)", "0.8", "0 = 필터 미사용")
+        self.p_gain = self.field(controls, 3, "P Gain (V·min/cc)", "0.020")
+        self.i_gain = self.field(controls, 5, "I Gain (V·min/cc·s)", "0.005")
+        self.lpf_cutoff = self.field(controls, 7, "LPF 차단주파수 (Hz)", "0.8", "0 = 필터 미사용")
 
-        self.pv_value = ttk.Label(controls, text="PV: 0.0 cc/min", style="Value.TLabel")
-        self.pv_value.grid(row=11, column=0, columnspan=2, sticky="w", pady=(14, 2))
         self.fb_hz = ttk.Label(controls, text="주파수: 0.00 Hz", style="Panel.TLabel")
-        self.fb_hz.grid(row=12, column=0, columnspan=2, sticky="w")
+        self.fb_hz.grid(row=9, column=0, columnspan=2, sticky="w", pady=(8, 0))
         self.output_value = ttk.Label(controls, text="AO: 0.000 V", style="ValueSmall.TLabel")
-        self.output_value.grid(row=13, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        self.output_value.grid(row=10, column=0, columnspan=2, sticky="w", pady=(4, 0))
 
         self.feedback_button = ttk.Button(
             controls, text="피드백 제어 시작", style="Start.TButton", command=self.toggle_feedback
         )
-        self.feedback_button.grid(row=14, column=0, sticky="ew", pady=(16, 0))
+        self.feedback_button.grid(row=11, column=0, sticky="ew", pady=(12, 0))
         ttk.Button(controls, text="설정 저장", command=self.save_settings).grid(
-            row=14, column=1, sticky="ew", padx=(8, 0), pady=(16, 0)
+            row=11, column=1, sticky="ew", padx=(8, 0), pady=(12, 0)
         )
         ttk.Label(
             controls,
@@ -896,23 +907,30 @@ class FlowControlApp(tk.Tk):
             style="Hint.TLabel",
             wraplength=250,
             justify="left",
-        ).grid(row=15, column=0, columnspan=2, sticky="w", pady=(12, 0))
+        ).grid(row=12, column=0, columnspan=2, sticky="w", pady=(8, 0))
 
         focus = self.panel(page)
         self.place_panel(focus, row=0, column=1, sticky="nsew", padx=(0, 10))
         ttk.Label(focus, text="CURRENT FLOW", style="PanelTitle.TLabel").pack(
-            anchor="w", pady=(0, 8)
+            anchor="w", pady=(0, 10)
         )
-        value_row = ttk.Frame(focus, style="Panel.TFrame")
-        value_row.pack(fill="x", pady=(2, 5))
-        self.focus_pv = ttk.Label(value_row, text="PV  0.0", style="ValueCompact.TLabel")
-        self.focus_pv.pack(side="left")
-        ttk.Label(value_row, text="  |  ", style="Panel.TLabel").pack(side="left")
-        self.focus_sv = ttk.Label(value_row, text="SV  0.0", style="ValueCompact.TLabel")
-        self.focus_sv.pack(side="left")
-        ttk.Label(focus, text="cc/min", style="Hint.TLabel").pack(anchor="w")
+        ttk.Label(focus, text="PV 현재 유량", style="Hint.TLabel").pack(anchor="w")
+        self.focus_pv = ttk.Label(focus, text="PV  0.0 cc/min", style="Value.TLabel")
+        self.focus_pv.pack(anchor="w", pady=(0, 12))
+        self.pv_value = self.focus_pv
+
+        ttk.Label(focus, text="SV 목표 유량 (cc/min)", style="Panel.TLabel").pack(anchor="w")
+        self.sv = tk.StringVar(value="120.0")
+        self.sv_entry = ttk.Entry(
+            focus,
+            textvariable=self.sv,
+            style="Highlight.TEntry",
+            justify="center",
+            width=12,
+        )
+        self.sv_entry.pack(fill="x", pady=(5, 10))
         self.focus_err = ttk.Label(focus, text="오차: 0.0 cc/min", style="ValueSmall.TLabel")
-        self.focus_err.pack(anchor="w", pady=(8, 0))
+        self.focus_err.pack(anchor="w")
 
         graphs = ttk.Frame(page, style="App.TFrame", width=330)
         graphs.grid(row=0, column=2, sticky="ns", padx=(0, 10))
@@ -1281,10 +1299,10 @@ class FlowControlApp(tk.Tk):
         popup.title("펌프 수동 전압 TEST (NI 9264 AO)")
         popup.configure(bg=COLORS["bg"])
 
-        screen_w = max(self.winfo_screenwidth(), 1024)
-        screen_h = max(self.winfo_screenheight(), 700)
-        w = min(820, int(screen_w * 0.65))
-        h = min(520, int(screen_h * 0.65))
+        screen_w = max(self.winfo_screenwidth(), 800)
+        screen_h = max(self.winfo_screenheight(), 480)
+        w = min(900, max(760, int(screen_w * 0.75)))
+        h = min(540, max(460, int(screen_h * 0.70)))
         popup.geometry(f"{w}x{h}")
 
         frame = ttk.Frame(popup, style="App.TFrame", padding=16)
@@ -1294,22 +1312,53 @@ class FlowControlApp(tk.Tk):
             anchor="w", pady=(0, 10)
         )
 
-        controls = self.panel(frame)
-        controls.pack(fill="both", expand=True)
+        body = ttk.Frame(frame, style="App.TFrame")
+        body.pack(fill="both", expand=True)
+        body.columnconfigure(1, weight=1)
+        body.rowconfigure(0, weight=1)
 
-        self.ao_voltage = self.field(controls, 1, "출력 전압 (V)", "0.0", "범위 0.0 ~ 5.0 V")
+        controls = self.panel(body)
+        self.place_panel(controls, row=0, column=0, sticky="nsw", padx=(0, 12))
+        ttk.Label(controls, text="수동 AO 설정", style="PanelTitle.TLabel").grid(
+            row=0, column=0, columnspan=2, sticky="w", pady=(0, 12)
+        )
+        ttk.Label(controls, text="출력 전압 (V)", style="Panel.TLabel").grid(
+            row=1, column=0, columnspan=2, sticky="w"
+        )
+        self.ao_voltage = tk.StringVar(value="0.0")
+        ao_entry = ttk.Entry(
+            controls,
+            textvariable=self.ao_voltage,
+            style="Highlight.TEntry",
+            justify="center",
+            width=15,
+        )
+        ao_entry.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(6, 3))
+        if self.touch_mode:
+            ao_entry.bind(
+                "<Button-1>",
+                lambda _event: (
+                    self.open_numeric_keypad(
+                        self.ao_voltage, "펌프 수동 출력 전압 (V)", 0.0, 5.0, 3
+                    ),
+                    "break",
+                )[1],
+            )
+        ttk.Label(controls, text="허용 범위 0.000 ~ 5.000 V", style="Hint.TLabel").grid(
+            row=3, column=0, columnspan=2, sticky="w"
+        )
         ttk.Button(
             controls, text="전압 출력", style="Start.TButton", command=self.output_ao
-        ).grid(row=3, column=0, columnspan=2, sticky="ew", pady=(16, 0))
+        ).grid(row=4, column=0, columnspan=2, sticky="ew", pady=(16, 0))
         ttk.Button(
             controls, text="0 V (정지)", style="Stop.TButton", command=self.zero_ao
-        ).grid(row=4, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ).grid(row=5, column=0, columnspan=2, sticky="ew", pady=(8, 0))
 
         self.ao_value = ttk.Label(controls, text="현재 출력: 0.000 V", style="Value.TLabel")
-        self.ao_value.grid(row=5, column=0, columnspan=2, sticky="w", pady=(22, 0))
+        self.ao_value.grid(row=6, column=0, columnspan=2, sticky="w", pady=(18, 0))
 
-        self.ao_graph = TrendGraph(frame, "AO 출력 추이", [("AO", COLORS["ao"])], 0, 5, "V")
-        self.ao_graph.pack(fill="both", expand=True, pady=(12, 0))
+        self.ao_graph = TrendGraph(body, "AO 출력 추이", [("AO", COLORS["ao"])], 0, 5, "V")
+        self.ao_graph.grid(row=0, column=1, sticky="nsew")
 
         popup.protocol("WM_DELETE_WINDOW", self._close_ao_popup)
 
@@ -1876,9 +1925,11 @@ class FlowControlApp(tk.Tk):
         self.current_ao = self.daq.write_voltage(ao)
 
         hz_text = "—" if math.isnan(hz) else f"{hz:.2f}"
-        self.pv_value.configure(text=f"PV: {pv:.1f} cc/min")
-        self.focus_pv.configure(text=f"PV  {pv:.1f}")
-        self.focus_sv.configure(text=f"SV  {sv:.1f}")
+        if self.touch_mode:
+            self.focus_pv.configure(text=f"PV  {pv:.1f}")
+            self.focus_sv.configure(text=f"SV  {sv:.1f}")
+        else:
+            self.focus_pv.configure(text=f"PV  {pv:.1f} cc/min")
         self.focus_err.configure(text=f"오차: {sv - pv:+.1f} cc/min")
         if self.mp5y_config.value_mode == "flow_ccpm":
             self.fb_hz.configure(text=f"MP5Y 표시: {raw_flow:.2f} cc/min")
