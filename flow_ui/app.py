@@ -368,7 +368,7 @@ class FlowControlApp(tk.Tk):
         self.monitor_button.grid(row=10, column=0, columnspan=2, sticky="ew", pady=(22, 0))
         ttk.Label(
             controls,
-            text="MP5Y 화면(cc/min)을 그대로 PV로 사용\n프리스케일 2.76×10^1 = 27.6",
+            text="MP5Y 화면(cc/min)을 그대로 PV로 사용\nin-A=PnP, 프리스케일 27.6",
             style="Hint.TLabel",
             wraplength=250,
             justify="left",
@@ -520,8 +520,10 @@ class FlowControlApp(tk.Tk):
         ).pack(anchor="w", pady=(4, 14))
 
         guide = (
-            "【유량계 → MP5Y-25】\n"
-            "  펄스 Out / GND  →  MP5Y 입력 단자 (NPN/PNP 일치)\n"
+            "【유량계 OF05ZAT-AR → MP5Y-25】\n"
+            "  AR = 전압 펄스 출력 (High/Low 전압 직접 출력)\n"
+            "  펄스 Out / GND  →  MP5Y 입력 단자\n"
+            "  MP5Y 입력방식 in-A: PnP  ★ 필수\n"
             "  펄스정수 0.46 ml/P\n"
             "  MP5Y 모드: F1 주파수\n"
             "  프리스케일: 2.76 × 10^1 = 27.6  → 화면 = cc/min\n"
