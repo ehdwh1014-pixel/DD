@@ -924,7 +924,7 @@ class FlowControlApp(tk.Tk):
         self.output_value = ttk.Label(focus, text="AO: 0.000 V", style="ValueSmall.TLabel")
         self.output_value.pack(anchor="w", pady=(4, 0))
 
-        graphs = ttk.Frame(page, style="App.TFrame", width=330)
+        graphs = ttk.Frame(page, style="App.TFrame", width=300)
         graphs.grid(row=0, column=2, sticky="ns", padx=(0, 10))
         graphs.grid_propagate(False)
         graphs.rowconfigure((0, 1), weight=1)
