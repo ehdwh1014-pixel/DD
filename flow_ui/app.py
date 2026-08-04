@@ -180,12 +180,18 @@ class FlowControlApp(tk.Tk):
         self.ICON_DIR = self._bundle_dir() / "assets"
         self.ICON_ICO = self.ICON_DIR / "app_icon.ico"
         self.ICON_PNG = self.ICON_DIR / "app_icon.png"
-        screen_w = max(self.winfo_screenwidth(), 1024)
-        screen_h = max(self.winfo_screenheight(), 700)
-        width = min(1280, int(screen_w * 0.96))
-        height = min(760, int(screen_h * 0.88))
-        self.geometry(f"{width}x{height}")
-        self.minsize(min(940, width), min(560, height))
+        screen_w = max(self.winfo_screenwidth(), 800)
+        screen_h = max(self.winfo_screenheight(), 480)
+        self.touch_mode = screen_w <= 1100 and screen_h <= 700
+        if self.touch_mode:
+            width, height = screen_w, screen_h
+            self.geometry(f"{width}x{height}+0+0")
+            self.minsize(min(800, width), min(480, height))
+        else:
+            width = min(1280, int(screen_w * 0.96))
+            height = min(760, int(screen_h * 0.88))
+            self.geometry(f"{width}x{height}")
+            self.minsize(min(940, width), min(560, height))
         self.configure(bg=COLORS["bg"])
         self._apply_window_icon()
 
@@ -203,6 +209,7 @@ class FlowControlApp(tk.Tk):
         self._level_was_available = False
         self._monitor_popup: tk.Toplevel | None = None
         self._ao_popup: tk.Toplevel | None = None
+        self._keypad_popup: tk.Toplevel | None = None
         self.valve_commands = [False, False, False]
         self.igniter_on = False
         self.status_on = False
@@ -322,34 +329,104 @@ class FlowControlApp(tk.Tk):
             padding=7,
             borderwidth=1,
         )
+        style.configure(
+            "TouchTitle.TLabel",
+            background=COLORS["bg"],
+            foreground=COLORS["title"],
+            font=("Segoe UI", 17, "bold"),
+        )
+        style.configure(
+            "TouchValue.TLabel",
+            background=COLORS["panel"],
+            foreground=COLORS["value"],
+            font=("Segoe UI", 32, "bold"),
+        )
+        style.configure(
+            "TouchSV.TLabel",
+            background=COLORS["panel"],
+            foreground=COLORS["sv"],
+            font=("Segoe UI", 24, "bold"),
+        )
+        style.configure(
+            "Touch.TButton",
+            font=("Segoe UI", 12, "bold"),
+            padding=(12, 11),
+            background=COLORS["accent_soft"],
+            foreground=COLORS["title"],
+        )
+        style.map("Touch.TButton", background=[("active", "#BFDDE2")])
+        style.configure(
+            "TouchNav.TButton",
+            font=("Segoe UI", 11, "bold"),
+            padding=(12, 10),
+            background="#E8EEF4",
+            foreground=COLORS["title"],
+        )
+        style.configure(
+            "TouchNavActive.TButton",
+            font=("Segoe UI", 11, "bold"),
+            padding=(12, 10),
+            background=COLORS["accent"],
+            foreground="#FFFFFF",
+        )
+        style.map(
+            "TouchNavActive.TButton",
+            background=[("active", COLORS["accent_deep"])],
+        )
+        style.configure(
+            "TouchStart.TButton",
+            font=("Segoe UI", 13, "bold"),
+            padding=(14, 13),
+            background="#BFE4D5",
+            foreground="#174B3A",
+        )
+        style.configure(
+            "TouchStop.TButton",
+            font=("Segoe UI", 13, "bold"),
+            padding=(14, 13),
+            background="#F1D5D8",
+            foreground="#722F37",
+        )
+        style.configure(
+            "Keypad.TButton",
+            font=("Segoe UI", 18, "bold"),
+            padding=(12, 10),
+            background="#E8EEF4",
+            foreground=COLORS["title"],
+        )
 
     def _build_layout(self) -> None:
-        header = ttk.Frame(self, style="App.TFrame", padding=(18, 10, 18, 6))
+        header_padding = (10, 6, 10, 4) if self.touch_mode else (18, 10, 18, 6)
+        header = ttk.Frame(self, style="App.TFrame", padding=header_padding)
         header.pack(fill="x")
 
         titles = ttk.Frame(header, style="App.TFrame")
         titles.pack(side="left")
-        ttk.Label(titles, text="PROCESS CONTROL DASHBOARD", style="Title.TLabel").pack(anchor="w")
-        ttk.Label(
-            titles,
-            text="MP5Y-25 유량(cc/min)  ·  NI 9264 AO  ·  프리스케일 27.6",
-            style="Sub.TLabel",
-        ).pack(anchor="w", pady=(2, 0))
+        title_style = "TouchTitle.TLabel" if self.touch_mode else "Title.TLabel"
+        title_text = "PROCESS CONTROL" if self.touch_mode else "PROCESS CONTROL DASHBOARD"
+        ttk.Label(titles, text=title_text, style=title_style).pack(anchor="w")
+        if not self.touch_mode:
+            ttk.Label(
+                titles,
+                text="MP5Y-25 유량(cc/min)  ·  NI 9264 AO  ·  프리스케일 27.6",
+                style="Sub.TLabel",
+            ).pack(anchor="w", pady=(2, 0))
 
         status = ttk.Frame(header, style="App.TFrame")
         status.pack(side="right")
-        ttk.Button(
-            status,
-            text="유량계 TEST",
-            style="Nav.TButton",
-            command=self.open_monitor_popup,
-        ).pack(side="right", padx=(0, 6))
-        ttk.Button(
-            status,
-            text="펌프 TEST",
-            style="Nav.TButton",
-            command=self.open_ao_popup,
-        ).pack(side="right", padx=(0, 12))
+        if not self.touch_mode:
+            ttk.Button(
+                status,
+                text="유량계 TEST",
+                style="Nav.TButton",
+                command=self.open_monitor_popup,
+            ).pack(side="right", padx=(0, 6))
+            ttk.Button(
+                status,
+                text="펌프 TEST",
+                style="Nav.TButton",
+                command=self.open_ao_popup,
+            ).pack(side="right", padx=(0, 12))
         self.status_canvas = tk.Canvas(
             status, width=18, height=18, bg=COLORS["bg"], highlightthickness=0
         )
@@ -357,11 +434,15 @@ class FlowControlApp(tk.Tk):
         self.status_dot = self.status_canvas.create_oval(3, 3, 15, 15, fill=COLORS["bad"], outline="")
         self.status_label = ttk.Label(status, text="통신 확인 중", style="Sub.TLabel")
         self.status_label.pack(side="right")
-        ttk.Button(status, text="채널 설정", command=self.open_settings).pack(side="right", padx=(8, 12))
+        if not self.touch_mode:
+            ttk.Button(status, text="채널 설정", command=self.open_settings).pack(
+                side="right", padx=(8, 12)
+            )
 
         self.nav_buttons: dict[str, ttk.Button] = {}
 
-        self.content = ttk.Frame(self, style="App.TFrame", padding=(18, 4, 18, 8))
+        content_padding = (8, 2, 8, 4) if self.touch_mode else (18, 4, 18, 8)
+        self.content = ttk.Frame(self, style="App.TFrame", padding=content_padding)
         self.content.pack(fill="both", expand=True)
         self.pages = {
             "monitor": self._create_monitor_page(),
@@ -369,7 +450,8 @@ class FlowControlApp(tk.Tk):
             "feedback": self._create_feedback_page(),
         }
 
-        footer = ttk.Frame(self, style="App.TFrame", padding=(18, 0, 18, 6))
+        footer_padding = (10, 0, 10, 2) if self.touch_mode else (18, 0, 18, 6)
+        footer = ttk.Frame(self, style="App.TFrame", padding=footer_padding)
         footer.pack(fill="x")
         self.device_label = ttk.Label(footer, text="", style="Sub.TLabel")
         self.device_label.pack(anchor="w")
@@ -389,6 +471,24 @@ class FlowControlApp(tk.Tk):
         ttk.Label(parent, text=label, style="Panel.TLabel").grid(row=row, column=0, sticky="w", pady=4)
         entry = ttk.Entry(parent, textvariable=value, width=14)
         entry.grid(row=row, column=1, sticky="e", padx=(12, 0))
+        if self.touch_mode:
+            keypad_ranges = {
+                "펄스정수 (ml/P)": (0.001, 999.0, 3),
+                "SV 목표 유량 (cc/min)": (0.0, 9999.0, 1),
+                "P Gain (V·min/cc)": (0.0, 100.0, 3),
+                "I Gain (V·min/cc·s)": (0.0, 100.0, 3),
+                "LPF 차단주파수 (Hz)": (0.0, 100.0, 2),
+                "출력 전압 (V)": (0.0, 5.0, 3),
+            }
+            if label in keypad_ranges:
+                minimum, maximum, decimals = keypad_ranges[label]
+                entry.bind(
+                    "<Button-1>",
+                    lambda _event, var=value, title=label, low=minimum, high=maximum, digits=decimals: (
+                        self.open_numeric_keypad(var, title, low, high, digits),
+                        "break",
+                    )[1],
+                )
         if hint:
             ttk.Label(parent, text=hint, style="Hint.TLabel").grid(
                 row=row + 1, column=0, columnspan=2, sticky="w", pady=(0, 2)
@@ -478,6 +578,277 @@ class FlowControlApp(tk.Tk):
         return page
 
     def _create_feedback_page(self) -> ttk.Frame:
+        if self.touch_mode:
+            return self._create_touch_feedback_page()
+        return self._create_desktop_feedback_page()
+
+    def _create_touch_feedback_page(self) -> ttk.Frame:
+        """Build the 1024×600 operator interface for a 7-inch touchscreen."""
+        page = ttk.Frame(self.content, style="App.TFrame")
+        page.columnconfigure(0, weight=1)
+        page.rowconfigure(1, weight=1)
+
+        nav = ttk.Frame(page, style="App.TFrame")
+        nav.grid(row=0, column=0, sticky="ew", pady=(0, 5))
+        nav_items = (
+            ("pump", "펌프"),
+            ("level", "레벨 / 밸브"),
+            ("flame", "화염 / 점화"),
+        )
+        self.touch_nav_buttons: dict[str, ttk.Button] = {}
+        for column, (name, text) in enumerate(nav_items):
+            nav.columnconfigure(column, weight=1)
+            button = ttk.Button(
+                nav,
+                text=text,
+                style="TouchNav.TButton",
+                command=lambda section=name: self._show_touch_section(section),
+            )
+            button.grid(row=0, column=column, sticky="ew", padx=(0 if column == 0 else 4, 0))
+            self.touch_nav_buttons[name] = button
+
+        actions = (
+            ("유량 TEST", self.open_monitor_popup),
+            ("펌프 TEST", self.open_ao_popup),
+            ("설정", self.open_settings),
+        )
+        for offset, (text, command) in enumerate(actions, start=3):
+            nav.columnconfigure(offset, weight=1)
+            ttk.Button(
+                nav, text=text, style="TouchNav.TButton", command=command
+            ).grid(row=0, column=offset, sticky="ew", padx=(4, 0))
+
+        body = ttk.Frame(page, style="App.TFrame")
+        body.grid(row=1, column=0, sticky="nsew")
+        body.rowconfigure(0, weight=1)
+        body.columnconfigure(0, weight=1)
+
+        self.touch_sections = {
+            "pump": self._create_touch_pump_section(body),
+            "level": self._create_touch_level_section(body),
+            "flame": self._create_touch_flame_section(body),
+        }
+        for section in self.touch_sections.values():
+            section.grid(row=0, column=0, sticky="nsew")
+        self._show_touch_section("pump")
+        return page
+
+    def _create_touch_pump_section(self, parent: tk.Misc) -> ttk.Frame:
+        section = ttk.Frame(parent, style="App.TFrame")
+        section.columnconfigure(0, weight=4)
+        section.columnconfigure(1, weight=3)
+        section.columnconfigure(2, weight=3)
+        section.rowconfigure(0, weight=1)
+
+        current = self.panel(section)
+        self.place_panel(current, row=0, column=0, sticky="nsew", padx=(0, 5))
+        ttk.Label(current, text="현재 유량", style="PanelTitle.TLabel").pack(anchor="w")
+        self.focus_pv = ttk.Label(current, text="PV  0.0", style="TouchValue.TLabel")
+        self.focus_pv.pack(anchor="w", pady=(3, 0))
+        self.pv_value = self.focus_pv
+        self.focus_sv = ttk.Label(current, text="SV  120.0", style="TouchSV.TLabel")
+        self.focus_sv.pack(anchor="w")
+        self.focus_err = ttk.Label(current, text="오차: 0.0 cc/min", style="ValueSmall.TLabel")
+        self.focus_err.pack(anchor="w", pady=(2, 0))
+        self.fb_hz = ttk.Label(current, text="MP5Y: 대기", style="Hint.TLabel")
+        self.fb_hz.pack(anchor="w", pady=(2, 0))
+        self.output_value = ttk.Label(current, text="AO: 0.000 V", style="ValueSmall.TLabel")
+        self.output_value.pack(anchor="w", pady=(2, 3))
+
+        self.feedback_graph = TrendGraph(
+            current,
+            "PV / SV",
+            [("PV", COLORS["pv"]), ("SV", COLORS["sv"])],
+            0,
+            200,
+            "cc/min",
+        )
+        self.feedback_graph.configure(height=105)
+        self.feedback_graph.pack(fill="both", expand=True, pady=(2, 5))
+        self.feedback_ao_graph = TrendGraph(
+            current, "AO", [("AO", COLORS["ao"])], 0, 5, "V"
+        )
+
+        self.feedback_button = ttk.Button(
+            current,
+            text="피드백 제어 시작",
+            style="TouchStart.TButton",
+            command=self.toggle_feedback,
+        )
+        self.feedback_button.pack(fill="x")
+
+        target = self.panel(section)
+        self.place_panel(target, row=0, column=1, sticky="nsew", padx=(0, 5))
+        ttk.Label(target, text="목표 유량 SV", style="PanelTitle.TLabel").pack(anchor="w")
+        self.sv = tk.StringVar(value="120.0")
+        self.touch_sv_display = ttk.Button(
+            target,
+            textvariable=self.sv,
+            style="Touch.TButton",
+            command=lambda: self.open_numeric_keypad(
+                self.sv, "목표 유량 SV (cc/min)", 0.0, 9999.0, 1
+            ),
+        )
+        self.touch_sv_display.pack(fill="x", pady=(6, 5))
+        ttk.Label(target, text="cc/min · 숫자를 누르면 키패드", style="Hint.TLabel").pack(
+            anchor="w", pady=(0, 6)
+        )
+
+        adjust = ttk.Frame(target, style="Panel.TFrame")
+        adjust.pack(fill="x")
+        for column, (text, delta) in enumerate((("-10", -10), ("-1", -1), ("+1", 1), ("+10", 10))):
+            adjust.columnconfigure(column, weight=1)
+            ttk.Button(
+                adjust,
+                text=text,
+                style="Touch.TButton",
+                command=lambda amount=delta: self._adjust_sv(amount),
+            ).grid(row=0, column=column, sticky="ew", padx=(0 if column == 0 else 3, 0))
+
+        ttk.Label(target, text="빠른 설정", style="Panel.TLabel").pack(anchor="w", pady=(10, 4))
+        presets = ttk.Frame(target, style="Panel.TFrame")
+        presets.pack(fill="x")
+        for index, value in enumerate((50, 100, 120, 150)):
+            row, column = divmod(index, 2)
+            presets.columnconfigure(column, weight=1)
+            ttk.Button(
+                presets,
+                text=f"{value}",
+                style="Touch.TButton",
+                command=lambda preset=value: self._set_sv(preset),
+            ).grid(
+                row=row,
+                column=column,
+                sticky="ew",
+                padx=(0 if column == 0 else 4, 0),
+                pady=(0 if row == 0 else 4, 0),
+            )
+
+        ttk.Button(
+            target,
+            text="전체 숫자 키패드",
+            style="Touch.TButton",
+            command=lambda: self.open_numeric_keypad(
+                self.sv, "목표 유량 SV (cc/min)", 0.0, 9999.0, 1
+            ),
+        ).pack(fill="x", pady=(9, 0))
+
+        tuning = self.panel(section)
+        self.place_panel(tuning, row=0, column=2, sticky="nsew")
+        ttk.Label(tuning, text="제어 설정", style="PanelTitle.TLabel").pack(anchor="w")
+        self.fb_pulse_ml = self._touch_numeric_field(
+            tuning, "펄스정수 (ml/P)", "0.46", 0.001, 999.0, 3
+        )
+        self.p_gain = self._touch_numeric_field(
+            tuning, "P Gain", "0.020", 0.0, 100.0, 3
+        )
+        self.i_gain = self._touch_numeric_field(
+            tuning, "I Gain", "0.005", 0.0, 100.0, 3
+        )
+        self.lpf_cutoff = self._touch_numeric_field(
+            tuning, "LPF (Hz) · 0=OFF", "0.8", 0.0, 100.0, 2
+        )
+        ttk.Button(
+            tuning, text="설정 저장", style="Touch.TButton", command=self.save_settings
+        ).pack(fill="x", pady=(7, 0))
+        self.sv.trace_add("write", lambda *_args: self._refresh_touch_sv())
+        self._refresh_touch_sv()
+        return section
+
+    def _create_touch_level_section(self, parent: tk.Misc) -> ttk.Frame:
+        section = ttk.Frame(parent, style="App.TFrame")
+        section.columnconfigure((0, 1, 2), weight=1)
+        section.rowconfigure(1, weight=1)
+
+        heading = self.panel(section)
+        self.place_panel(heading, row=0, column=0, columnspan=3, sticky="ew", pady=(0, 5))
+        ttk.Label(heading, text="레벨 / 밸브 자동 제어", style="PanelTitle.TLabel").pack(
+            side="left"
+        )
+        self.level_master_status = ttk.Label(
+            heading, text="DAQ 연결 대기 · 밸브 안전 닫힘", style="ValueSmall.TLabel"
+        )
+        self.level_master_status.pack(side="right")
+
+        self.level_high_labels = []
+        self.level_low_labels = []
+        self.valve_status_labels = []
+        self.level_logic_labels = []
+        definitions = (
+            ("밸브 1 · 급수", "LOW → 열림  /  HIGH → 닫힘"),
+            ("밸브 2 · 배수", "LOW → 닫힘  /  HIGH → 열림"),
+            ("밸브 3 · 배수", "LOW → 닫힘  /  HIGH → 열림"),
+        )
+        for index, (name, rule) in enumerate(definitions):
+            card = self.panel(section)
+            self.place_panel(
+                card,
+                row=1,
+                column=index,
+                sticky="nsew",
+                padx=(0 if index == 0 else 5, 0),
+            )
+            ttk.Label(card, text=name, style="PanelTitle.TLabel").pack(anchor="w")
+            ttk.Label(card, text=rule, style="Hint.TLabel").pack(anchor="w", pady=(2, 14))
+            high = ttk.Label(card, text="●  HIGH   OFF", style="ValueSmall.TLabel")
+            high.pack(anchor="w", pady=5)
+            low = ttk.Label(card, text="●  LOW    OFF", style="ValueSmall.TLabel")
+            low.pack(anchor="w", pady=5)
+            ttk.Separator(card, orient="horizontal").pack(fill="x", pady=12)
+            valve = ttk.Label(card, text="닫힘 명령", style="TouchSV.TLabel")
+            valve.pack(anchor="w")
+            logic = ttk.Label(card, text="DAQ 연결 대기", style="Panel.TLabel")
+            logic.pack(anchor="w", pady=(8, 0))
+            self.level_high_labels.append(high)
+            self.level_low_labels.append(low)
+            self.valve_status_labels.append(valve)
+            self.level_logic_labels.append(logic)
+        return section
+
+    def _create_touch_flame_section(self, parent: tk.Misc) -> ttk.Frame:
+        section = ttk.Frame(parent, style="App.TFrame")
+        section.columnconfigure(0, weight=1)
+        section.rowconfigure(0, weight=1)
+        card = self.panel(section)
+        self.place_panel(card, row=0, column=0, sticky="nsew")
+
+        ttk.Label(card, text="화염 감지 / 점화기", style="PanelTitle.TLabel").pack(anchor="w")
+        center = ttk.Frame(card, style="Panel.TFrame")
+        center.pack(expand=True)
+        self.flame_canvas = tk.Canvas(
+            center, width=150, height=150, bg=COLORS["panel"], highlightthickness=0
+        )
+        self.flame_canvas.pack(side="left", padx=(0, 28))
+        self.flame_ring = self.flame_canvas.create_oval(
+            5, 5, 145, 145, fill="#F1F5F9", outline="#CBD5E1", width=5
+        )
+        self.flame_lamp = self.flame_canvas.create_oval(
+            32, 32, 118, 118, fill="#CBD5E1", outline="#94A3B8", width=4
+        )
+        controls = ttk.Frame(center, style="Panel.TFrame")
+        controls.pack(side="left")
+        ttk.Label(controls, text="IFW15 FLAME STATUS", style="Hint.TLabel").pack(anchor="w")
+        self.flame_label = ttk.Label(
+            controls, text="SENSOR OFFLINE", style="TouchSV.TLabel"
+        )
+        self.flame_label.pack(anchor="w", pady=(4, 20))
+        self.igniter_button = ttk.Button(
+            controls,
+            text="점화기 OFF",
+            style="TouchStop.TButton",
+            command=self.toggle_igniter,
+            width=20,
+        )
+        self.igniter_button.pack(fill="x")
+        ttk.Label(
+            controls,
+            text="화염 감지: NI 9422 DI6\n점화 SSR: NI 9477 DO3",
+            style="Panel.TLabel",
+            justify="left",
+        ).pack(anchor="w", pady=(18, 0))
+        return section
+
+    def _create_desktop_feedback_page(self) -> ttk.Frame:
         page = ttk.Frame(self.content, style="App.TFrame")
         page.columnconfigure(0, weight=0)
         page.columnconfigure(1, weight=1)
@@ -637,6 +1008,159 @@ class FlowControlApp(tk.Tk):
         return page
 
     # ------------------------------------------------------------- helpers
+    def _show_touch_section(self, name: str) -> None:
+        if not hasattr(self, "touch_sections"):
+            return
+        self.touch_sections[name].tkraise()
+        for section_name, button in self.touch_nav_buttons.items():
+            button.configure(
+                style="TouchNavActive.TButton" if section_name == name else "TouchNav.TButton"
+            )
+
+    def _touch_numeric_field(
+        self,
+        parent: tk.Misc,
+        label: str,
+        default: str,
+        minimum: float,
+        maximum: float,
+        decimals: int,
+    ) -> tk.StringVar:
+        value = tk.StringVar(value=default)
+        row = ttk.Frame(parent, style="Panel.TFrame")
+        row.pack(fill="x", pady=(6, 0))
+        ttk.Label(row, text=label, style="Panel.TLabel").pack(side="left")
+        ttk.Button(
+            row,
+            textvariable=value,
+            style="Touch.TButton",
+            width=8,
+            command=lambda: self.open_numeric_keypad(
+                value, label, minimum, maximum, decimals
+            ),
+        ).pack(side="right")
+        return value
+
+    def _set_sv(self, value: float) -> None:
+        self.sv.set(f"{max(0.0, min(9999.0, float(value))):.1f}")
+
+    def _adjust_sv(self, delta: float) -> None:
+        current = self.number_silent(self.sv, 0.0)
+        self._set_sv(current + delta)
+
+    def _refresh_touch_sv(self) -> None:
+        if not self.touch_mode or not hasattr(self, "focus_sv"):
+            return
+        value = self.number_silent(self.sv, 0.0)
+        self.focus_sv.configure(text=f"SV  {value:.1f}")
+
+    def open_numeric_keypad(
+        self,
+        variable: tk.StringVar,
+        title: str,
+        minimum: float,
+        maximum: float,
+        decimals: int,
+    ) -> None:
+        """Open a finger-friendly modal keypad for numeric process settings."""
+        if self._keypad_popup is not None and self._keypad_popup.winfo_exists():
+            self._keypad_popup.destroy()
+
+        popup = tk.Toplevel(self)
+        self._keypad_popup = popup
+        popup.title(title)
+        popup.configure(bg=COLORS["bg"])
+        popup.transient(self)
+        popup.grab_set()
+
+        width = min(430, max(360, self.winfo_screenwidth() - 30))
+        height = min(500, max(420, self.winfo_screenheight() - 30))
+        x = max(0, (self.winfo_screenwidth() - width) // 2)
+        y = max(0, (self.winfo_screenheight() - height) // 2)
+        popup.geometry(f"{width}x{height}+{x}+{y}")
+        popup.resizable(False, False)
+
+        buffer = tk.StringVar(value=variable.get().strip() or "0")
+        frame = ttk.Frame(popup, style="App.TFrame", padding=12)
+        frame.pack(fill="both", expand=True)
+        ttk.Label(frame, text=title, style="TouchTitle.TLabel").pack(anchor="w")
+        ttk.Label(
+            frame,
+            text=f"허용 범위: {minimum:g} ~ {maximum:g}",
+            style="Sub.TLabel",
+        ).pack(anchor="w", pady=(1, 6))
+        display = ttk.Label(frame, textvariable=buffer, style="TouchValue.TLabel", anchor="e")
+        display.pack(fill="x", pady=(0, 8), ipady=4)
+
+        keys = ttk.Frame(frame, style="App.TFrame")
+        keys.pack(fill="both", expand=True)
+        for column in range(3):
+            keys.columnconfigure(column, weight=1)
+        for row in range(4):
+            keys.rowconfigure(row, weight=1)
+
+        def append(character: str) -> None:
+            text = buffer.get()
+            if character == ".":
+                if "." not in text:
+                    buffer.set((text or "0") + ".")
+                return
+            if len(text) >= 12:
+                return
+            buffer.set(character if text == "0" else text + character)
+
+        for index, character in enumerate(("7", "8", "9", "4", "5", "6", "1", "2", "3")):
+            row, column = divmod(index, 3)
+            ttk.Button(
+                keys,
+                text=character,
+                style="Keypad.TButton",
+                command=lambda key=character: append(key),
+            ).grid(row=row, column=column, sticky="nsew", padx=3, pady=3)
+        ttk.Button(
+            keys, text="C", style="Keypad.TButton", command=lambda: buffer.set("0")
+        ).grid(row=3, column=0, sticky="nsew", padx=3, pady=3)
+        ttk.Button(
+            keys, text="0", style="Keypad.TButton", command=lambda: append("0")
+        ).grid(row=3, column=1, sticky="nsew", padx=3, pady=3)
+        ttk.Button(
+            keys, text=".", style="Keypad.TButton", command=lambda: append(".")
+        ).grid(row=3, column=2, sticky="nsew", padx=3, pady=3)
+
+        actions = ttk.Frame(frame, style="App.TFrame")
+        actions.pack(fill="x", pady=(7, 0))
+        actions.columnconfigure((0, 1, 2), weight=1)
+
+        def backspace() -> None:
+            text = buffer.get()[:-1]
+            buffer.set(text or "0")
+
+        def apply_value() -> None:
+            try:
+                value = float(buffer.get())
+            except ValueError:
+                messagebox.showerror("입력 오류", "숫자를 입력하세요.", parent=popup)
+                return
+            if not minimum <= value <= maximum:
+                messagebox.showerror(
+                    "입력 오류",
+                    f"{minimum:g} ~ {maximum:g} 범위로 입력하세요.",
+                    parent=popup,
+                )
+                return
+            variable.set(f"{value:.{decimals}f}")
+            popup.destroy()
+
+        ttk.Button(actions, text="⌫", style="Touch.TButton", command=backspace).grid(
+            row=0, column=0, sticky="ew", padx=(0, 4)
+        )
+        ttk.Button(actions, text="취소", style="Touch.TButton", command=popup.destroy).grid(
+            row=0, column=1, sticky="ew", padx=4
+        )
+        ttk.Button(actions, text="적용", style="TouchStart.TButton", command=apply_value).grid(
+            row=0, column=2, sticky="ew", padx=(4, 0)
+        )
+
     def show_page(self, page: str) -> None:
         self.active_page = page
         for name, frame in self.pages.items():
@@ -885,12 +1409,14 @@ class FlowControlApp(tk.Tk):
         dialog = tk.Toplevel(self)
         dialog.title("채널 / 통신 설정")
         dialog.configure(bg=COLORS["bg"])
-        dialog.geometry("590x570")
+        dialog.geometry("620x550" if self.touch_mode else "590x570")
         dialog.transient(self)
         dialog.grab_set()
 
-        frame = ttk.Frame(dialog, style="Panel.TFrame", padding=20)
-        frame.pack(fill="both", expand=True, padx=16, pady=16)
+        frame_padding = 10 if self.touch_mode else 20
+        outer_padding = 6 if self.touch_mode else 16
+        frame = ttk.Frame(dialog, style="Panel.TFrame", padding=frame_padding)
+        frame.pack(fill="both", expand=True, padx=outer_padding, pady=outer_padding)
         ttk.Label(frame, text="MP5Y / NI-DAQ", style="PanelTitle.TLabel").grid(
             row=0, column=0, columnspan=2, sticky="w", pady=(0, 12)
         )
@@ -917,7 +1443,9 @@ class FlowControlApp(tk.Tk):
             (9, "표시모드 (frequency_hz/flow_ccpm)", mode_var),
             (10, "PV포맷 (int16/int32/dec32)", fmt_var),
         ):
-            ttk.Label(frame, text=label, style="Panel.TLabel").grid(row=row, column=0, sticky="w", pady=8)
+            ttk.Label(frame, text=label, style="Panel.TLabel").grid(
+                row=row, column=0, sticky="w", pady=3 if self.touch_mode else 8
+            )
             ttk.Entry(frame, textvariable=var, width=28).grid(row=row, column=1, padx=(12, 0))
 
         def apply() -> None:
@@ -953,8 +1481,13 @@ class FlowControlApp(tk.Tk):
             self.refresh_connection()
             dialog.destroy()
 
-        ttk.Button(frame, text="적용", style="Start.TButton", command=apply).grid(
-            row=9, column=0, columnspan=2, sticky="ew", pady=(18, 0)
+        ttk.Button(
+            frame,
+            text="적용",
+            style="TouchStart.TButton" if self.touch_mode else "Start.TButton",
+            command=apply,
+        ).grid(
+            row=11, column=0, columnspan=2, sticky="ew", pady=(18, 0)
         )
 
     # -------------------------------------------------------------- actions
@@ -1042,7 +1575,15 @@ class FlowControlApp(tk.Tk):
 
         self.feedback_button.configure(
             text="피드백 제어 중지" if self.feedback_running else "피드백 제어 시작",
-            style="Stop.TButton" if self.feedback_running else "Start.TButton",
+            style=(
+                "TouchStop.TButton"
+                if self.touch_mode and self.feedback_running
+                else "TouchStart.TButton"
+                if self.touch_mode
+                else "Stop.TButton"
+                if self.feedback_running
+                else "Start.TButton"
+            ),
         )
 
     def _start_level_control_automatically(self) -> bool:
@@ -1137,10 +1678,14 @@ class FlowControlApp(tk.Tk):
             stop_error += f" / 점화기 SSR OFF 실패: {exc}"
         self.mp5y.close()
         self.monitor_button.configure(text="측정 시작", style="Start.TButton")
-        self.feedback_button.configure(text="피드백 제어 시작", style="Start.TButton")
+        self.feedback_button.configure(
+            text="피드백 제어 시작",
+            style="TouchStart.TButton" if self.touch_mode else "Start.TButton",
+        )
         if hasattr(self, "igniter_button"):
             self.igniter_button.configure(
-                text="점화기 OFF", style="Compact.TButton"
+                text="점화기 OFF",
+                style="TouchStop.TButton" if self.touch_mode else "Compact.TButton",
             )
         self.level_master_status.configure(text="안전 정지 · 모든 밸브 닫힘 명령")
         self._render_level_states([False] * 6, ["오류 · 안전 닫힘"] * 3)
@@ -1154,7 +1699,13 @@ class FlowControlApp(tk.Tk):
             # Level availability ~= NI 9422/9477 present; keeps UX consistent.
             messagebox.showerror("NI-DAQ 오류", "NI 9422/9477 연결을 확인하세요.")
             return
-        self.igniter_on = not self.igniter_on
+        requested = not self.igniter_on
+        if requested and not messagebox.askyesno(
+            "점화 확인",
+            "점화기 SSR을 ON 하시겠습니까?\n주변 안전과 연료 상태를 확인하세요.",
+        ):
+            return
+        self.igniter_on = requested
         try:
             self.daq.write_igniter(self.igniter_on)
         except DaqError as exc:
@@ -1163,7 +1714,13 @@ class FlowControlApp(tk.Tk):
             return
         self.igniter_button.configure(
             text=f"점화기 {'ON' if self.igniter_on else 'OFF'}",
-            style="Compact.TButton",
+            style=(
+                "TouchStart.TButton"
+                if self.touch_mode and self.igniter_on
+                else "TouchStop.TButton"
+                if self.touch_mode
+                else "Compact.TButton"
+            ),
         )
 
     def _update_flame_status(self) -> None:
