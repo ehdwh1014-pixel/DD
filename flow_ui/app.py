@@ -274,7 +274,7 @@ class FlowControlApp(tk.Tk):
         ttk.Label(titles, text="Pulse Flow Control", style="Title.TLabel").pack(anchor="w")
         ttk.Label(
             titles,
-            text="MP5Y-25 RS485  ·  NI 9264 AO  ·  0.46 ml/P",
+            text="MP5Y-25 유량(cc/min)  ·  NI 9264 AO  ·  프리스케일 27.6",
             style="Sub.TLabel",
         ).pack(anchor="w", pady=(2, 0))
 
@@ -348,14 +348,14 @@ class FlowControlApp(tk.Tk):
         )
         self.pulse_ml = self.field(controls, 1, "펄스정수 (ml/P)", "0.46")
         self.decimal_places = self.field(
-            controls, 3, "소수점 자리", "auto", "auto 또는 0~4 (MP5Y 화면과 Hz가 다를 때)"
+            controls, 3, "소수점 자리", "auto", "auto 또는 0~4 (MP5Y 화면과 값이 다를 때)"
         )
         self.mon_flow = ttk.Label(controls, text="0.0 cc/min", style="Value.TLabel")
         self.mon_flow.grid(row=5, column=0, columnspan=2, sticky="w", pady=(18, 4))
-        self.mon_hz = ttk.Label(controls, text="MP5Y 표시: 0.00 Hz", style="ValueSmall.TLabel")
+        self.mon_hz = ttk.Label(controls, text="MP5Y 표시: 0.00 cc/min", style="ValueSmall.TLabel")
         self.mon_hz.grid(row=6, column=0, columnspan=2, sticky="w")
         self.mon_conv = ttk.Label(
-            controls, text="환산: Hz × 0.46 × 60", style="Panel.TLabel"
+            controls, text="환산: MP5Y 프리스케일 27.6 사용 (이중환산 없음)", style="Panel.TLabel"
         )
         self.mon_conv.grid(row=7, column=0, columnspan=2, sticky="w", pady=(4, 0))
         self.mon_raw = ttk.Label(controls, text="MP5Y raw: 0", style="Panel.TLabel")
@@ -368,7 +368,7 @@ class FlowControlApp(tk.Tk):
         self.monitor_button.grid(row=10, column=0, columnspan=2, sticky="ew", pady=(22, 0))
         ttk.Label(
             controls,
-            text="MP5Y 화면 Hz와 'MP5Y 표시'가 같아야 정상\n유량(cc/min) = Hz × ml/P × 60",
+            text="MP5Y 화면(cc/min)을 그대로 PV로 사용\n프리스케일 2.76×10^1 = 27.6",
             style="Hint.TLabel",
             wraplength=250,
             justify="left",
@@ -383,7 +383,7 @@ class FlowControlApp(tk.Tk):
         )
         self.mon_flow_graph.grid(row=0, column=0, sticky="nsew", pady=(0, 8))
         self.mon_hz_graph = TrendGraph(
-            graphs, "펄스 주파수", [("Hz", COLORS["hz"])], 0, 20, "Hz"
+            graphs, "추정 주파수", [("Hz", COLORS["hz"])], 0, 20, "Hz"
         )
         self.mon_hz_graph.grid(row=1, column=0, sticky="nsew")
         return page
@@ -521,23 +521,23 @@ class FlowControlApp(tk.Tk):
 
         guide = (
             "【유량계 → MP5Y-25】\n"
-            "  펄스 Out / GND  →  MP5Y 입력 단자 (NPN 또는 PNP 설정 일치)\n"
+            "  펄스 Out / GND  →  MP5Y 입력 단자 (NPN/PNP 일치)\n"
             "  펄스정수 0.46 ml/P\n"
-            "  MP5Y 동작모드 권장: F1 주파수\n"
+            "  MP5Y 모드: F1 주파수\n"
+            "  프리스케일: 2.76 × 10^1 = 27.6  → 화면 = cc/min\n"
             "\n"
             "【MP5Y-25 → USB-RS485】\n"
             "  MP5Y A(+)  →  컨버터 A\n"
             "  MP5Y B(−)  →  컨버터 B\n"
             "  PC COM 포트: COM3\n"
-            "  통신: 9600 / 8 / None / Stop2 / Addr 1 (출하 기본)\n"
+            "  통신: 9600 / 8 / None / Stop2 / Addr 1\n"
             "\n"
             "【펌프 → NI 9264 ao0】\n"
             "  펌프 + 입력    →  NI 9264  ao0\n"
             "  펌프 GND/COM   →  AO GND\n"
             "\n"
-            "환산: 유량(cc/min) = Hz × 0.46 × 60\n"
-            "MP5Y에 프리스케일로 cc/min을 띄우면\n"
-            "채널 설정에서 표시모드를 'flow_ccpm'으로 바꾸세요."
+            "UI는 MP5Y 표시값(cc/min)을 그대로 PV로 사용합니다.\n"
+            "(소프트웨어에서 ×0.46×60 를 다시 하지 않음)"
         )
         box = tk.Text(
             frame,
@@ -805,12 +805,15 @@ class FlowControlApp(tk.Tk):
         mode_name = MODE_NAMES.get(self.mp5y.last_mode, f"mode={self.mp5y.last_mode}")
         r0, r1, r2 = self.mp5y.last_regs
         self.mon_flow.configure(text=f"{flow:.1f} cc/min")
-        self.mon_hz.configure(text=f"MP5Y 표시: {hz_text} Hz")
-        if math.isnan(hz):
-            self.mon_conv.configure(text="환산: MP5Y 유량 직접 사용")
-        else:
+        if self.mp5y_config.value_mode == "flow_ccpm":
+            self.mon_hz.configure(text=f"MP5Y 표시: {raw_flow:.2f} cc/min")
             self.mon_conv.configure(
-                text=f"환산: {hz:.2f} × {pulse_ml:.2f} × 60 = {raw_flow:.1f} cc/min"
+                text=f"추정 Hz: {hz_text}  (표시÷27.6) · 이중환산 없음"
+            )
+        else:
+            self.mon_hz.configure(text=f"MP5Y 표시: {hz_text} Hz")
+            self.mon_conv.configure(
+                text=f"환산: {hz_text} × {pulse_ml:.2f} × 60 = {raw_flow:.1f} cc/min"
             )
         self.mon_raw.configure(text=f"raw:{raw} DOT={dot} regs=[{r0},{r1},{r2}]")
         self.mon_mode.configure(text=f"모드: {mode_name}")
@@ -838,7 +841,10 @@ class FlowControlApp(tk.Tk):
 
         hz_text = "—" if math.isnan(hz) else f"{hz:.2f}"
         self.pv_value.configure(text=f"PV: {pv:.1f} cc/min")
-        self.fb_hz.configure(text=f"MP5Y 표시: {hz_text} Hz")
+        if self.mp5y_config.value_mode == "flow_ccpm":
+            self.fb_hz.configure(text=f"MP5Y 표시: {raw_flow:.2f} cc/min")
+        else:
+            self.fb_hz.configure(text=f"MP5Y 표시: {hz_text} Hz")
         self.output_value.configure(text=f"AO: {self.current_ao:.3f} V")
         self.feedback_graph.set_scale(0, max(200.0, sv * 1.5), "cc/min")
         self.feedback_graph.add(pv, sv)
@@ -884,7 +890,7 @@ class FlowControlApp(tk.Tk):
         self.mp5y_config.port = str(data.get("mp5y_port", "COM3"))
         self.mp5y_config.slave_id = int(data.get("mp5y_slave_id", 1))
         self.mp5y_config.baudrate = int(data.get("mp5y_baudrate", 9600))
-        self.mp5y_config.value_mode = str(data.get("mp5y_value_mode", "frequency_hz"))
+        self.mp5y_config.value_mode = str(data.get("mp5y_value_mode", "flow_ccpm"))
         self.mp5y_config.pv_format = str(data.get("mp5y_pv_format", "int16"))
         self.decimal_places.set(str(data.get("decimal_places", "auto")))
         self.mp5y = Mp5yService(self.mp5y_config)

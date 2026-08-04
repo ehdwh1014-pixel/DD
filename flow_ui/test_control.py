@@ -51,7 +51,7 @@ class Mp5yDecodeTests(unittest.TestCase):
         self.assertEqual(service._decode_pv(0x0486, 0x0F00), service._decode_s16(0x0486))
 
     def test_simulate_returns_positive_flow(self) -> None:
-        service = Mp5yService(Mp5yConfig(port="COM3", value_mode="frequency_hz"))
+        service = Mp5yService(Mp5yConfig(port="COM3", value_mode="flow_ccpm"))
         flow, hz, raw, dot = service.simulate_flow()
         self.assertGreater(flow, 0.0)
         self.assertGreater(hz, 0.0)

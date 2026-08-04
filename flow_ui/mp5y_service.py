@@ -53,8 +53,8 @@ class Mp5yConfig:
     bytesize: int = 8
     timeout_s: float = 0.5
     # "frequency_hz": MP5Y shows Hz, convert with pulse_ml * 60
-    # "flow_ccpm": MP5Y already shows cc/min (prescale applied on meter)
-    value_mode: str = "frequency_hz"
+    # "flow_ccpm": MP5Y already shows cc/min (prescale 27.6 = 0.46*60)
+    value_mode: str = "flow_ccpm"
     pulse_ml: float = DEFAULT_PULSE_ML
     pv_address: int = 0x03E9
     # int16: use only first PV register (safe default)
