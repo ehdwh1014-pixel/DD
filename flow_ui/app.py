@@ -440,11 +440,11 @@ class FlowControlApp(tk.Tk):
             ).pack(side="right", padx=(0, 12))
         # Large blinking DAQ / MP5Y link lamp — kept bigger than the old 12px dot.
         self.status_canvas = tk.Canvas(
-            status, width=28, height=28, bg=COLORS["bg"], highlightthickness=0
+            status, width=34, height=34, bg=COLORS["bg"], highlightthickness=0
         )
         self.status_canvas.pack(side="right", padx=(10, 0))
         self.status_dot = self.status_canvas.create_oval(
-            3, 3, 25, 25, fill=COLORS["bad"], outline="#9B2C2C", width=2
+            3, 3, 31, 31, fill=COLORS["bad"], outline="#9B2C2C", width=2
         )
         self.status_label = ttk.Label(status, text="통신 확인 중", style="Sub.TLabel")
         self.status_label.pack(side="right")
