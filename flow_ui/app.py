@@ -889,25 +889,13 @@ class FlowControlApp(tk.Tk):
         self.i_gain = self.field(controls, 5, "I Gain (V·min/cc·s)", "0.005")
         self.lpf_cutoff = self.field(controls, 7, "LPF 차단주파수 (Hz)", "0.8", "0 = 필터 미사용")
 
-        self.fb_hz = ttk.Label(controls, text="주파수: 0.00 Hz", style="Panel.TLabel")
-        self.fb_hz.grid(row=9, column=0, columnspan=2, sticky="w", pady=(8, 0))
-        self.output_value = ttk.Label(controls, text="AO: 0.000 V", style="ValueSmall.TLabel")
-        self.output_value.grid(row=10, column=0, columnspan=2, sticky="w", pady=(4, 0))
-
         self.feedback_button = ttk.Button(
             controls, text="피드백 제어 시작", style="Start.TButton", command=self.toggle_feedback
         )
-        self.feedback_button.grid(row=11, column=0, sticky="ew", pady=(12, 0))
+        self.feedback_button.grid(row=9, column=0, sticky="ew", pady=(10, 0))
         ttk.Button(controls, text="설정 저장", command=self.save_settings).grid(
-            row=11, column=1, sticky="ew", padx=(8, 0), pady=(12, 0)
+            row=9, column=1, sticky="ew", padx=(8, 0), pady=(10, 0)
         )
-        ttk.Label(
-            controls,
-            text="PV = MP5Y Modbus 값\nAO = clamp(P×오차 + I×∫오차 dt, 0~5V)",
-            style="Hint.TLabel",
-            wraplength=250,
-            justify="left",
-        ).grid(row=12, column=0, columnspan=2, sticky="w", pady=(8, 0))
 
         focus = self.panel(page)
         self.place_panel(focus, row=0, column=1, sticky="nsew", padx=(0, 10))
@@ -926,11 +914,15 @@ class FlowControlApp(tk.Tk):
             textvariable=self.sv,
             style="Highlight.TEntry",
             justify="center",
-            width=12,
+            width=10,
         )
         self.sv_entry.pack(fill="x", pady=(5, 10))
         self.focus_err = ttk.Label(focus, text="오차: 0.0 cc/min", style="ValueSmall.TLabel")
-        self.focus_err.pack(anchor="w")
+        self.focus_err.pack(anchor="w", pady=(0, 8))
+        self.fb_hz = ttk.Label(focus, text="MP5Y: 대기", style="Panel.TLabel")
+        self.fb_hz.pack(anchor="w")
+        self.output_value = ttk.Label(focus, text="AO: 0.000 V", style="ValueSmall.TLabel")
+        self.output_value.pack(anchor="w", pady=(4, 0))
 
         graphs = ttk.Frame(page, style="App.TFrame", width=330)
         graphs.grid(row=0, column=2, sticky="ns", padx=(0, 10))
