@@ -880,7 +880,7 @@ class FlowControlApp(tk.Tk):
         controls = self.panel(page)
         self.place_panel(controls, row=0, column=0, sticky="nsw", padx=(0, 10))
         ttk.Label(controls, text="펌프 피드백 제어", style="PanelTitle.TLabel").grid(
-            row=0, column=0, columnspan=2, sticky="w", pady=(0, 10)
+            row=0, column=0, columnspan=2, sticky="w", pady=(0, 4)
         )
 
         self.fb_pulse_ml = self.field(controls, 1, "펄스정수 (ml/P)", "0.46")
@@ -891,9 +891,9 @@ class FlowControlApp(tk.Tk):
         self.feedback_button = ttk.Button(
             controls, text="피드백 제어 시작", style="Start.TButton", command=self.toggle_feedback
         )
-        self.feedback_button.grid(row=9, column=0, sticky="ew", pady=(10, 0))
+        self.feedback_button.grid(row=9, column=0, sticky="ew", pady=(4, 0))
         ttk.Button(controls, text="설정 저장", command=self.save_settings).grid(
-            row=9, column=1, sticky="ew", padx=(8, 0), pady=(10, 0)
+            row=9, column=1, sticky="ew", padx=(8, 0), pady=(4, 0)
         )
 
         focus = self.panel(page)
@@ -947,7 +947,7 @@ class FlowControlApp(tk.Tk):
         )
         self.igniter_button.pack(side="right")
 
-        graphs = ttk.Frame(page, style="App.TFrame", width=300)
+        graphs = ttk.Frame(page, style="App.TFrame", width=292)
         graphs.grid(row=0, column=2, sticky="ns")
         graphs.grid_propagate(False)
         graphs.rowconfigure((0, 1), weight=1)
