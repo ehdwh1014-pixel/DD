@@ -410,7 +410,7 @@ class FlowControlApp(tk.Tk):
         )
 
     def _build_layout(self) -> None:
-        header_padding = (10, 6, 10, 4) if self.touch_mode else (18, 10, 18, 6)
+        header_padding = (10, 6, 10, 4) if self.touch_mode else (14, 10, 14, 6)
         header = ttk.Frame(self, style="App.TFrame", padding=header_padding)
         header.pack(fill="x")
 
