@@ -189,7 +189,7 @@ class FlowControlApp(tk.Tk):
             self.minsize(min(800, width), min(480, height))
         else:
             width = min(1280, int(screen_w * 0.96))
-            height = min(760, int(screen_h * 0.94))
+            height = min(760, int(screen_h * 0.88))
             self.geometry(f"{width}x{height}")
             self.minsize(min(940, width), min(560, height))
         self.configure(bg=COLORS["bg"])
