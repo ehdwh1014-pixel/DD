@@ -696,14 +696,21 @@ class FlowControlApp(tk.Tk):
 
         adjust = ttk.Frame(target, style="Panel.TFrame")
         adjust.pack(fill="x")
-        for column, (text, delta) in enumerate((("-10", -10), ("-1", -1), ("+1", 1), ("+10", 10))):
+        for index, (text, delta) in enumerate((("-10", -10), ("-1", -1), ("+1", 1), ("+10", 10))):
+            row, column = divmod(index, 2)
             adjust.columnconfigure(column, weight=1)
             ttk.Button(
                 adjust,
                 text=text,
                 style="Touch.TButton",
                 command=lambda amount=delta: self._adjust_sv(amount),
-            ).grid(row=0, column=column, sticky="ew", padx=(0 if column == 0 else 3, 0))
+            ).grid(
+                row=row,
+                column=column,
+                sticky="ew",
+                padx=(0 if column == 0 else 3, 0),
+                pady=(0 if row == 0 else 3, 0),
+            )
 
         ttk.Label(target, text="빠른 설정", style="Panel.TLabel").pack(anchor="w", pady=(10, 4))
         presets = ttk.Frame(target, style="Panel.TFrame")
