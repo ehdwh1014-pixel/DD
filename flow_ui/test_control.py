@@ -45,9 +45,14 @@ class Mp5yDecodeTests(unittest.TestCase):
         self.assertEqual(Mp5yService._decode_s32(0, 1200), 1200)
         self.assertEqual(Mp5yService._decode_s32(0xFFFF, 0xFFFF), -1)
 
+    def test_decode_rejects_blown_int32(self) -> None:
+        service = Mp5yService(Mp5yConfig(pv_format="int32"))
+        # Former bug: merging a non-PV word created ~75e6.
+        self.assertEqual(service._decode_pv(0x0486, 0x0F00), service._decode_s16(0x0486))
+
     def test_simulate_returns_positive_flow(self) -> None:
         service = Mp5yService(Mp5yConfig(port="COM3", value_mode="frequency_hz"))
-        flow, hz, raw, dot = service._simulate()
+        flow, hz, raw, dot = service.simulate_flow()
         self.assertGreater(flow, 0.0)
         self.assertGreater(hz, 0.0)
         self.assertIsInstance(raw, int)

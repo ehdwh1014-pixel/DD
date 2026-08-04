@@ -26,7 +26,7 @@ if __package__ in (None, ""):
 from flow_ui.control import LowPassFilter, PIController
 from flow_ui.daq_service import ChannelConfig, DaqError, DaqService
 from flow_ui.flow_math import DEFAULT_PULSE_ML
-from flow_ui.mp5y_service import Mp5yConfig, Mp5yError, Mp5yService
+from flow_ui.mp5y_service import MODE_NAMES, Mp5yConfig, Mp5yError, Mp5yService
 
 
 # Soft blush / rose palette — clean, balanced, feminine.
@@ -353,17 +353,19 @@ class FlowControlApp(tk.Tk):
         self.mon_hz.grid(row=4, column=0, columnspan=2, sticky="w")
         self.mon_raw = ttk.Label(controls, text="MP5Y raw: 0", style="Panel.TLabel")
         self.mon_raw.grid(row=5, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        self.mon_mode = ttk.Label(controls, text="모드: -", style="Panel.TLabel")
+        self.mon_mode.grid(row=6, column=0, columnspan=2, sticky="w", pady=(4, 0))
         self.monitor_button = ttk.Button(
             controls, text="측정 시작", style="Start.TButton", command=self.toggle_monitor
         )
-        self.monitor_button.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(22, 0))
+        self.monitor_button.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(22, 0))
         ttk.Label(
             controls,
-            text="유량계 → MP5Y-25 → USB-RS485 (COM3)\n기본: MP5Y 주파수(Hz) × 0.46 × 60",
+            text="유량계 → MP5Y-25 → USB-RS485 (COM3)\nMP5Y 모드를 F1 주파수로 맞추세요",
             style="Hint.TLabel",
             wraplength=250,
             justify="left",
-        ).grid(row=7, column=0, columnspan=2, sticky="w", pady=(12, 0))
+        ).grid(row=8, column=0, columnspan=2, sticky="w", pady=(12, 0))
 
         graphs = ttk.Frame(page, style="App.TFrame")
         graphs.grid(row=0, column=1, sticky="nsew")
@@ -550,7 +552,7 @@ class FlowControlApp(tk.Tk):
         dialog = tk.Toplevel(self)
         dialog.title("채널 / 통신 설정")
         dialog.configure(bg=COLORS["bg"])
-        dialog.geometry("520x420")
+        dialog.geometry("520x480")
         dialog.transient(self)
         dialog.grab_set()
 
@@ -565,12 +567,14 @@ class FlowControlApp(tk.Tk):
         slave_var = tk.StringVar(value=str(self.mp5y_config.slave_id))
         baud_var = tk.StringVar(value=str(self.mp5y_config.baudrate))
         mode_var = tk.StringVar(value=self.mp5y_config.value_mode)
+        fmt_var = tk.StringVar(value=self.mp5y_config.pv_format)
         for row, label, var in (
             (1, "AO 펌프 채널", ao_var),
             (2, "MP5Y COM 포트", port_var),
             (3, "MP5Y 주소", slave_var),
             (4, "MP5Y Baud", baud_var),
             (5, "표시모드 (frequency_hz/flow_ccpm)", mode_var),
+            (6, "PV포맷 (int16/int32/dec32)", fmt_var),
         ):
             ttk.Label(frame, text=label, style="Panel.TLabel").grid(row=row, column=0, sticky="w", pady=8)
             ttk.Entry(frame, textvariable=var, width=28).grid(row=row, column=1, padx=(12, 0))
@@ -593,14 +597,19 @@ class FlowControlApp(tk.Tk):
             if mode not in {"frequency_hz", "flow_ccpm"}:
                 messagebox.showerror("입력 오류", "표시모드는 frequency_hz 또는 flow_ccpm")
                 return
+            fmt = fmt_var.get().strip()
+            if fmt not in {"int16", "int32", "dec32"}:
+                messagebox.showerror("입력 오류", "PV포맷은 int16 / int32 / dec32")
+                return
             self.mp5y_config.value_mode = mode
+            self.mp5y_config.pv_format = fmt
             self.mp5y.close()
             self.mp5y = Mp5yService(self.mp5y_config)
             self.refresh_connection()
             dialog.destroy()
 
         ttk.Button(frame, text="적용", style="Start.TButton", command=apply).grid(
-            row=6, column=0, columnspan=2, sticky="ew", pady=(18, 0)
+            row=7, column=0, columnspan=2, sticky="ew", pady=(18, 0)
         )
 
     # -------------------------------------------------------------- actions
@@ -772,9 +781,12 @@ class FlowControlApp(tk.Tk):
         flow = self.lpf.update(raw_flow, dt, 1.0)
         self.filtered_flow = flow
         hz_text = "—" if math.isnan(hz) else f"{hz:.2f}"
+        mode_name = MODE_NAMES.get(self.mp5y.last_mode, f"mode={self.mp5y.last_mode}")
+        r0, r1, r2 = self.mp5y.last_regs
         self.mon_flow.configure(text=f"{flow:.1f} cc/min")
         self.mon_hz.configure(text=f"주파수: {hz_text} Hz")
-        self.mon_raw.configure(text=f"MP5Y raw: {raw} (DOT={dot})")
+        self.mon_raw.configure(text=f"raw:{raw} DOT={dot} regs=[{r0},{r1},{r2}]")
+        self.mon_mode.configure(text=f"모드: {mode_name}")
         self.mon_flow_graph.set_scale(0, max(200.0, flow * 1.4 + 20), "cc/min")
         self.mon_flow_graph.add(flow)
         self.mon_hz_graph.add(0.0 if math.isnan(hz) else hz)
@@ -817,6 +829,7 @@ class FlowControlApp(tk.Tk):
             "mp5y_slave_id": self.mp5y_config.slave_id,
             "mp5y_baudrate": self.mp5y_config.baudrate,
             "mp5y_value_mode": self.mp5y_config.value_mode,
+            "mp5y_pv_format": self.mp5y_config.pv_format,
         }
         try:
             self.SETTINGS_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
@@ -843,6 +856,7 @@ class FlowControlApp(tk.Tk):
         self.mp5y_config.slave_id = int(data.get("mp5y_slave_id", 1))
         self.mp5y_config.baudrate = int(data.get("mp5y_baudrate", 9600))
         self.mp5y_config.value_mode = str(data.get("mp5y_value_mode", "frequency_hz"))
+        self.mp5y_config.pv_format = str(data.get("mp5y_pv_format", "int16"))
         self.mp5y = Mp5yService(self.mp5y_config)
 
     def on_close(self) -> None:
