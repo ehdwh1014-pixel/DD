@@ -164,8 +164,12 @@ class FlowControlApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title("Pulse Flow · Feedback Control")
-        self.geometry("1240x800")
-        self.minsize(1040, 700)
+        screen_w = max(self.winfo_screenwidth(), 1024)
+        screen_h = max(self.winfo_screenheight(), 700)
+        width = min(1240, int(screen_w * 0.94))
+        height = min(800, int(screen_h * 0.9))
+        self.geometry(f"{width}x{height}")
+        self.minsize(min(960, width), min(620, height))
         self.configure(bg=COLORS["bg"])
 
         self.channels = ChannelConfig()
