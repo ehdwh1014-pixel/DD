@@ -347,25 +347,32 @@ class FlowControlApp(tk.Tk):
             row=0, column=0, columnspan=2, sticky="w", pady=(0, 14)
         )
         self.pulse_ml = self.field(controls, 1, "펄스정수 (ml/P)", "0.46")
+        self.decimal_places = self.field(
+            controls, 3, "소수점 자리", "auto", "auto 또는 0~4 (MP5Y 화면과 Hz가 다를 때)"
+        )
         self.mon_flow = ttk.Label(controls, text="0.0 cc/min", style="Value.TLabel")
-        self.mon_flow.grid(row=3, column=0, columnspan=2, sticky="w", pady=(18, 4))
-        self.mon_hz = ttk.Label(controls, text="주파수: 0.00 Hz", style="ValueSmall.TLabel")
-        self.mon_hz.grid(row=4, column=0, columnspan=2, sticky="w")
+        self.mon_flow.grid(row=5, column=0, columnspan=2, sticky="w", pady=(18, 4))
+        self.mon_hz = ttk.Label(controls, text="MP5Y 표시: 0.00 Hz", style="ValueSmall.TLabel")
+        self.mon_hz.grid(row=6, column=0, columnspan=2, sticky="w")
+        self.mon_conv = ttk.Label(
+            controls, text="환산: Hz × 0.46 × 60", style="Panel.TLabel"
+        )
+        self.mon_conv.grid(row=7, column=0, columnspan=2, sticky="w", pady=(4, 0))
         self.mon_raw = ttk.Label(controls, text="MP5Y raw: 0", style="Panel.TLabel")
-        self.mon_raw.grid(row=5, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        self.mon_raw.grid(row=8, column=0, columnspan=2, sticky="w", pady=(6, 0))
         self.mon_mode = ttk.Label(controls, text="모드: -", style="Panel.TLabel")
-        self.mon_mode.grid(row=6, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        self.mon_mode.grid(row=9, column=0, columnspan=2, sticky="w", pady=(4, 0))
         self.monitor_button = ttk.Button(
             controls, text="측정 시작", style="Start.TButton", command=self.toggle_monitor
         )
-        self.monitor_button.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(22, 0))
+        self.monitor_button.grid(row=10, column=0, columnspan=2, sticky="ew", pady=(22, 0))
         ttk.Label(
             controls,
-            text="유량계 → MP5Y-25 → USB-RS485 (COM3)\nMP5Y 모드를 F1 주파수로 맞추세요",
+            text="MP5Y 화면 Hz와 'MP5Y 표시'가 같아야 정상\n유량(cc/min) = Hz × ml/P × 60",
             style="Hint.TLabel",
             wraplength=250,
             justify="left",
-        ).grid(row=8, column=0, columnspan=2, sticky="w", pady=(12, 0))
+        ).grid(row=11, column=0, columnspan=2, sticky="w", pady=(12, 0))
 
         graphs = ttk.Frame(page, style="App.TFrame")
         graphs.grid(row=0, column=1, sticky="nsew")
@@ -761,7 +768,21 @@ class FlowControlApp(tk.Tk):
         self.status_canvas.itemconfigure(self.status_dot, fill=COLORS["bad"])
         self.status_label.configure(text=f"안전 정지: {error}{stop_error}")
 
+    def _apply_mp5y_options(self, pulse_ml: float) -> None:
+        self.mp5y_config.pulse_ml = pulse_ml
+        text = self.decimal_places.get().strip().lower()
+        if text in {"", "auto", "dot"}:
+            self.mp5y_config.decimal_places = None
+        else:
+            try:
+                places = int(text)
+            except ValueError:
+                places = -1
+            self.mp5y_config.decimal_places = places if 0 <= places <= 4 else None
+        self.mp5y.config = self.mp5y_config
+
     def _read_mp5y(self, pulse_ml: float) -> tuple[float, float, int, int]:
+        self._apply_mp5y_options(pulse_ml)
         try:
             return self.mp5y.read_flow(pulse_ml=pulse_ml)
         except Mp5yError:
@@ -784,7 +805,13 @@ class FlowControlApp(tk.Tk):
         mode_name = MODE_NAMES.get(self.mp5y.last_mode, f"mode={self.mp5y.last_mode}")
         r0, r1, r2 = self.mp5y.last_regs
         self.mon_flow.configure(text=f"{flow:.1f} cc/min")
-        self.mon_hz.configure(text=f"주파수: {hz_text} Hz")
+        self.mon_hz.configure(text=f"MP5Y 표시: {hz_text} Hz")
+        if math.isnan(hz):
+            self.mon_conv.configure(text="환산: MP5Y 유량 직접 사용")
+        else:
+            self.mon_conv.configure(
+                text=f"환산: {hz:.2f} × {pulse_ml:.2f} × 60 = {raw_flow:.1f} cc/min"
+            )
         self.mon_raw.configure(text=f"raw:{raw} DOT={dot} regs=[{r0},{r1},{r2}]")
         self.mon_mode.configure(text=f"모드: {mode_name}")
         self.mon_flow_graph.set_scale(0, max(200.0, flow * 1.4 + 20), "cc/min")
@@ -793,6 +820,7 @@ class FlowControlApp(tk.Tk):
 
     def _update_feedback(self) -> None:
         pulse_ml = self.number_silent(self.fb_pulse_ml, DEFAULT_PULSE_ML)
+        # Keep monitor decimal setting for feedback reads too.
         raw_flow, hz, _raw, _dot = self._read_mp5y(pulse_ml)
         now = time.monotonic()
         dt = max(now - (self._last_loop_at or now), 0.001)
@@ -810,7 +838,7 @@ class FlowControlApp(tk.Tk):
 
         hz_text = "—" if math.isnan(hz) else f"{hz:.2f}"
         self.pv_value.configure(text=f"PV: {pv:.1f} cc/min")
-        self.fb_hz.configure(text=f"주파수: {hz_text} Hz")
+        self.fb_hz.configure(text=f"MP5Y 표시: {hz_text} Hz")
         self.output_value.configure(text=f"AO: {self.current_ao:.3f} V")
         self.feedback_graph.set_scale(0, max(200.0, sv * 1.5), "cc/min")
         self.feedback_graph.add(pv, sv)
@@ -830,6 +858,7 @@ class FlowControlApp(tk.Tk):
             "mp5y_baudrate": self.mp5y_config.baudrate,
             "mp5y_value_mode": self.mp5y_config.value_mode,
             "mp5y_pv_format": self.mp5y_config.pv_format,
+            "decimal_places": self.decimal_places.get(),
         }
         try:
             self.SETTINGS_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
@@ -857,6 +886,7 @@ class FlowControlApp(tk.Tk):
         self.mp5y_config.baudrate = int(data.get("mp5y_baudrate", 9600))
         self.mp5y_config.value_mode = str(data.get("mp5y_value_mode", "frequency_hz"))
         self.mp5y_config.pv_format = str(data.get("mp5y_pv_format", "int16"))
+        self.decimal_places.set(str(data.get("decimal_places", "auto")))
         self.mp5y = Mp5yService(self.mp5y_config)
 
     def on_close(self) -> None:

@@ -52,7 +52,7 @@ class Mp5yConfig:
     stopbits: int = 2
     bytesize: int = 8
     timeout_s: float = 0.5
-    # "frequency_hz": MP5Y shows Hz, convert with pulse_ml
+    # "frequency_hz": MP5Y shows Hz, convert with pulse_ml * 60
     # "flow_ccpm": MP5Y already shows cc/min (prescale applied on meter)
     value_mode: str = "frequency_hz"
     pulse_ml: float = DEFAULT_PULSE_ML
@@ -61,6 +61,8 @@ class Mp5yConfig:
     # int32: binary high/low word
     # dec32: Autonics decimal high*10000 + low
     pv_format: str = "int16"
+    # None/-1: use DOT register from MP5Y. 0..4: force decimal places.
+    decimal_places: int | None = None
 
 
 class Mp5yService:
@@ -179,8 +181,11 @@ class Mp5yService:
 
         raw = self._decode_pv(word0, word1)
         dot = int(dot_reg) & 0xFF
+        if self.config.decimal_places is not None and self.config.decimal_places >= 0:
+            dot = int(self.config.decimal_places)
         if dot < 0 or dot > 4:
             dot = 0
+        # This scaled value should match the MP5Y front display.
         scaled = raw / (10 ** dot)
 
         if self.config.value_mode == "flow_ccpm":
@@ -188,6 +193,7 @@ class Mp5yService:
             hz = float("nan") if self.config.pulse_ml <= 0 else flow / (self.config.pulse_ml * 60.0)
         else:
             hz = float(scaled)
+            # cc/min = Hz × (ml/P) × 60
             flow = frequency_to_ccpm(hz, self.config.pulse_ml)
         return flow, hz, raw, dot
 
