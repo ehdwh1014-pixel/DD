@@ -3,10 +3,14 @@
 Hardware (NI MAX):
   Chassis : cDAQ-9178 -> cDAQ2
   Slot 1  : NI 9264   -> cDAQ2Mod1  (AO pump voltage, ao0, 0~5 V)
-  Slot 2  : NI 9422   -> cDAQ2Mod2  (DI counter, first channel = PFI0)
+  Slot 2  : NI 9422   -> cDAQ2Mod2  (DI counter, first channel = DI0/PFI0)
 
-Pulse counting uses the chassis counter cDAQ2/ctr0 with source terminal
-/cDAQ2Mod2/PFI0 (NI 9422 Count Edges default for Ctr0).
+Flow meter: Aichi OF05ZAT-AR (voltage pulse, no pull-up)
+  White Out -> DI0+
+  DI0- / sensor Black / AO GND -> common PSU GND
+
+Pulse counting uses chassis counter cDAQ2/ctr0 with source terminal
+/cDAQ2Mod2/PFI0 (NI 9422 Count Edges default for Ctr0 / DI0).
 """
 
 from __future__ import annotations

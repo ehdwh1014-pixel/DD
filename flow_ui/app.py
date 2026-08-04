@@ -269,7 +269,7 @@ class FlowControlApp(tk.Tk):
         ttk.Label(titles, text="Pulse Flow Control", style="Title.TLabel").pack(anchor="w")
         ttk.Label(
             titles,
-            text="NI 9422 Counter  ·  NI 9264 AO  ·  OF-Z 0.46 ml/P",
+            text="NI 9422 Counter  ·  NI 9264 AO  ·  OF05ZAT-AR 0.46 ml/P",
             style="Sub.TLabel",
         ).pack(anchor="w", pady=(2, 0))
 
@@ -282,6 +282,7 @@ class FlowControlApp(tk.Tk):
         self.status_dot = self.status_canvas.create_oval(3, 3, 15, 15, fill=COLORS["bad"], outline="")
         self.status_label = ttk.Label(status, text="통신 확인 중", style="Sub.TLabel")
         self.status_label.pack(side="right")
+        ttk.Button(status, text="배선 가이드", command=self.open_wiring_guide).pack(side="right", padx=(0, 8))
         ttk.Button(status, text="채널 설정", command=self.open_settings).pack(side="right", padx=16)
 
         nav = ttk.Frame(self, style="App.TFrame", padding=(28, 8, 28, 10))
@@ -354,9 +355,10 @@ class FlowControlApp(tk.Tk):
         self.monitor_button.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(22, 0))
         ttk.Label(
             controls,
-            text="9422 첫 채널(PFI0) 펄스를 카운트합니다.",
+            text="OF05ZAT-AR → 9422 DI0+/DI0− (PFI0)\n풀업 없이 전압 펄스 카운트",
             style="Hint.TLabel",
-            wraplength=240,
+            wraplength=250,
+            justify="left",
         ).grid(row=7, column=0, columnspan=2, sticky="w", pady=(12, 0))
 
         graphs = ttk.Frame(page, style="App.TFrame")
@@ -394,8 +396,9 @@ class FlowControlApp(tk.Tk):
         self.ao_value.grid(row=5, column=0, columnspan=2, sticky="w", pady=(22, 0))
         ttk.Label(
             controls,
-            text="9264 첫 채널 ao0 → 펌프 전압",
+            text="9264 ao0 → 펌프 전압\nAO GND는 유량계/DI0−와 공통 GND",
             style="Hint.TLabel",
+            justify="left",
         ).grid(row=6, column=0, columnspan=2, sticky="w", pady=(10, 0))
 
         self.ao_graph = TrendGraph(page, "AO 출력 추이", [("AO", COLORS["ao"])], 0, 5, "V")
@@ -482,6 +485,61 @@ class FlowControlApp(tk.Tk):
             return float(variable.get().strip())
         except ValueError:
             return default
+
+    def open_wiring_guide(self) -> None:
+        dialog = tk.Toplevel(self)
+        dialog.title("OF05ZAT-AR 배선 가이드")
+        dialog.configure(bg=COLORS["bg"])
+        dialog.geometry("560x520")
+        dialog.transient(self)
+        dialog.grab_set()
+
+        frame = ttk.Frame(dialog, style="Panel.TFrame", padding=22)
+        frame.pack(fill="both", expand=True, padx=16, pady=16)
+
+        ttk.Label(frame, text="OF05ZAT-AR · 전압 펄스 배선", style="PanelTitle.TLabel").pack(
+            anchor="w"
+        )
+        ttk.Label(
+            frame,
+            text="AR 타입은 외부 풀업 저항이 필요 없습니다.",
+            style="Hint.TLabel",
+        ).pack(anchor="w", pady=(4, 14))
+
+        guide = (
+            "【유량계 → NI 9422 DI0】\n"
+            "  Red   (+V)     →  PSU +12V 또는 +24V\n"
+            "  Black (GND)    →  PSU GND (−)\n"
+            "  White (Out)    →  NI 9422  DI0+\n"
+            "  NI 9422 DI0−   →  PSU GND (−)   ★ 필수\n"
+            "\n"
+            "【펌프 → NI 9264 ao0】\n"
+            "  펌프 + 입력    →  NI 9264  ao0\n"
+            "  펌프 GND/COM   →  PSU GND (−)\n"
+            "\n"
+            "【공통 GND — 한 점에 묶기】\n"
+            "  1) 유량계 Black\n"
+            "  2) NI 9422 DI0−\n"
+            "  3) NI 9264 AO GND\n"
+            "\n"
+            "채널: 카운터 cDAQ2/ctr0 ← /cDAQ2Mod2/PFI0\n"
+            "      펌프 AO  cDAQ2Mod1/ao0  (0~5 V)"
+        )
+        box = tk.Text(
+            frame,
+            height=18,
+            wrap="word",
+            font=("Consolas", 11),
+            bg=COLORS["panel_alt"],
+            fg=COLORS["title"],
+            relief="flat",
+            padx=12,
+            pady=12,
+        )
+        box.insert("1.0", guide)
+        box.configure(state="disabled")
+        box.pack(fill="both", expand=True)
+        ttk.Button(frame, text="닫기", command=dialog.destroy).pack(pady=(14, 0))
 
     def open_settings(self) -> None:
         dialog = tk.Toplevel(self)
