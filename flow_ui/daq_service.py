@@ -31,6 +31,10 @@ class ChannelConfig:
     ao_pump: str = f"{AO_MODULE}/ao0"
     level_inputs: str = f"{DI_MODULE}/port0/line0:5"
     valve_outputs: str = f"{DO_MODULE}/port0/line0:2"
+    # IFW15 flame detector (potential-free contacts) -> NI 9422 DI6 (line6).
+    # SSR input -> NI 9477 DO3 (line3). NI 9477 is sinking output.
+    flame_input: str = f"{DI_MODULE}/port0/line6"
+    igniter_output: str = f"{DO_MODULE}/port0/line3"
 
 
 class DaqService:
@@ -49,9 +53,14 @@ class DaqService:
         self._ao_channel: str | None = None
         self._di_task = None
         self._do_task = None
+        self._di_flame_task = None
+        self._do_igniter_task = None
         self._level_channel: str | None = None
         self._valve_channel: str | None = None
+        self._flame_channel: str | None = None
+        self._igniter_channel: str | None = None
         self._last_valves = [False, False, False]
+        self._last_igniter = False
         try:
             import nidaqmx  # type: ignore
 
@@ -142,6 +151,66 @@ class DaqService:
             self._close_do_task()
             raise DaqError(f"밸브 출력 오류: {exc}") from exc
 
+    def read_flame(self) -> bool:
+        """Read IFW15 flame detector contact (DI6).
+
+        Expected wiring:
+          DI+ <- external +24V (sensor contact supply)
+          DI- <- external 0V
+          NO/NC contact closure will make DI ON depending on wiring.
+        """
+        if not (self.level_available and self._nidaqmx):
+            return False
+        try:
+            if self._di_flame_task is not None and self._flame_channel != self.channels.flame_input:
+                self._close_di_flame_task()
+            if self._di_flame_task is None:
+                from nidaqmx.constants import LineGrouping  # type: ignore
+
+                task = self._nidaqmx.Task()
+                task.di_channels.add_di_chan(
+                    self.channels.flame_input,
+                    line_grouping=LineGrouping.CHAN_PER_LINE,
+                )
+                self._di_flame_task = task
+                self._flame_channel = self.channels.flame_input
+            value = self._di_flame_task.read()
+            # read() may return bool or list[bool] depending on grouping
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, (list, tuple)) and value:
+                return bool(value[0])
+            return bool(value)
+        except Exception as exc:  # noqa: BLE001
+            self._close_di_flame_task()
+            raise DaqError(f"화염 DI 읽기 오류: {exc}") from exc
+
+    def write_igniter(self, on: bool) -> bool:
+        """Write SSR input control (DO3)."""
+        on = bool(on)
+        if not (self.level_available and self._nidaqmx):
+            self._last_igniter = on
+            return on
+        try:
+            if self._do_igniter_task is not None and self._igniter_channel != self.channels.igniter_output:
+                self._close_do_igniter_task()
+            if self._do_igniter_task is None:
+                from nidaqmx.constants import LineGrouping  # type: ignore
+
+                task = self._nidaqmx.Task()
+                task.do_channels.add_do_chan(
+                    self.channels.igniter_output,
+                    line_grouping=LineGrouping.CHAN_PER_LINE,
+                )
+                self._do_igniter_task = task
+                self._igniter_channel = self.channels.igniter_output
+            self._do_igniter_task.write([on], auto_start=True)
+            self._last_igniter = on
+            return on
+        except Exception as exc:  # noqa: BLE001
+            self._close_do_igniter_task()
+            raise DaqError(f"점화기 SSR 출력 오류: {exc}") from exc
+
     def write_voltage(self, voltage: float, channel: str | None = None) -> float:
         voltage = max(0.0, min(5.0, float(voltage)))
         channel = channel or self.channels.ao_pump
@@ -183,10 +252,30 @@ class DaqService:
             except Exception:  # noqa: BLE001
                 pass
 
+    def _close_di_flame_task(self) -> None:
+        task = self._di_flame_task
+        self._di_flame_task = None
+        self._flame_channel = None
+        if task is not None:
+            try:
+                task.close()
+            except Exception:  # noqa: BLE001
+                pass
+
     def _close_do_task(self) -> None:
         task = self._do_task
         self._do_task = None
         self._valve_channel = None
+        if task is not None:
+            try:
+                task.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _close_do_igniter_task(self) -> None:
+        task = self._do_igniter_task
+        self._do_igniter_task = None
+        self._igniter_channel = None
         if task is not None:
             try:
                 task.close()
@@ -199,9 +288,15 @@ class DaqService:
         except DaqError:
             pass
         try:
+            self.write_igniter(False)
+        except DaqError:
+            pass
+        try:
             self.write_voltage(0.0)
         except DaqError:
             pass
         self._close_di_task()
         self._close_do_task()
+        self._close_di_flame_task()
+        self._close_do_igniter_task()
         self._close_ao_task()

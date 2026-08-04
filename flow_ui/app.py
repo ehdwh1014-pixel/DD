@@ -186,6 +186,7 @@ class FlowControlApp(tk.Tk):
         self._monitor_popup: tk.Toplevel | None = None
         self._ao_popup: tk.Toplevel | None = None
         self.valve_commands = [False, False, False]
+        self.igniter_on = False
         self.status_on = False
         self.current_ao = 0.0
         self.filtered_flow = 0.0
@@ -476,6 +477,26 @@ class FlowControlApp(tk.Tk):
             wraplength=250,
             justify="left",
         ).grid(row=15, column=0, columnspan=2, sticky="w", pady=(12, 0))
+
+        ttk.Separator(controls, orient="horizontal").grid(
+            row=16, column=0, columnspan=2, sticky="ew", pady=(12, 6)
+        )
+        self.flame_label = ttk.Label(controls, text="화염 감지(DI6): OFF", style="Panel.TLabel")
+        self.flame_label.grid(row=17, column=0, columnspan=2, sticky="w", pady=(0, 6))
+        self.igniter_button = ttk.Button(
+            controls,
+            text="점화기 수동 SSR: OFF",
+            style="Stop.TButton",
+            command=self.toggle_igniter,
+        )
+        self.igniter_button.grid(row=18, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        ttk.Label(
+            controls,
+            text="주의: 점화기는 수동 제어입니다.\n화염감지 상태는 DI 접점값을 표시합니다.",
+            style="Hint.TLabel",
+            wraplength=250,
+            justify="left",
+        ).grid(row=19, column=0, columnspan=2, sticky="w", pady=(10, 0))
 
         focus = self.panel(page)
         self.place_panel(focus, row=0, column=1, sticky="ns", padx=(0, 10))
@@ -882,6 +903,8 @@ class FlowControlApp(tk.Tk):
         ao_var = tk.StringVar(value=self.channels.ao_pump)
         di_var = tk.StringVar(value=self.channels.level_inputs)
         do_var = tk.StringVar(value=self.channels.valve_outputs)
+        flame_di_var = tk.StringVar(value=self.channels.flame_input)
+        igniter_do_var = tk.StringVar(value=self.channels.igniter_output)
         port_var = tk.StringVar(value=self.mp5y_config.port)
         slave_var = tk.StringVar(value=str(self.mp5y_config.slave_id))
         baud_var = tk.StringVar(value=str(self.mp5y_config.baudrate))
@@ -891,11 +914,13 @@ class FlowControlApp(tk.Tk):
             (1, "AO 펌프 채널", ao_var),
             (2, "레벨 입력 DI0:5", di_var),
             (3, "밸브 출력 DO0:2", do_var),
-            (4, "MP5Y COM 포트", port_var),
-            (5, "MP5Y 주소", slave_var),
-            (6, "MP5Y Baud", baud_var),
-            (7, "표시모드 (frequency_hz/flow_ccpm)", mode_var),
-            (8, "PV포맷 (int16/int32/dec32)", fmt_var),
+            (4, "화염 감지 DI6", flame_di_var),
+            (5, "점화기 SSR DO3", igniter_do_var),
+            (6, "MP5Y COM 포트", port_var),
+            (7, "MP5Y 주소", slave_var),
+            (8, "MP5Y Baud", baud_var),
+            (9, "표시모드 (frequency_hz/flow_ccpm)", mode_var),
+            (10, "PV포맷 (int16/int32/dec32)", fmt_var),
         ):
             ttk.Label(frame, text=label, style="Panel.TLabel").grid(row=row, column=0, sticky="w", pady=8)
             ttk.Entry(frame, textvariable=var, width=28).grid(row=row, column=1, padx=(12, 0))
@@ -904,6 +929,8 @@ class FlowControlApp(tk.Tk):
             self.channels.ao_pump = ao_var.get().strip() or self.channels.ao_pump
             self.channels.level_inputs = di_var.get().strip() or self.channels.level_inputs
             self.channels.valve_outputs = do_var.get().strip() or self.channels.valve_outputs
+            self.channels.flame_input = flame_di_var.get().strip() or self.channels.flame_input
+            self.channels.igniter_output = igniter_do_var.get().strip() or self.channels.igniter_output
             self.daq.channels = self.channels
             self.mp5y_config.port = port_var.get().strip() or "COM3"
             try:
@@ -1094,6 +1121,7 @@ class FlowControlApp(tk.Tk):
                 self._update_feedback()
             if self.level_running:
                 self._update_levels()
+            self._update_flame_status()
         except (Mp5yError, DaqError) as exc:
             self._safe_stop(exc)
         except Exception as exc:  # noqa: BLE001
@@ -1109,6 +1137,7 @@ class FlowControlApp(tk.Tk):
         self.monitor_running = False
         self.feedback_running = False
         self.level_running = False
+        self.igniter_on = False
         stop_error = ""
         try:
             self.current_ao = self.daq.write_voltage(0.0)
@@ -1118,15 +1147,50 @@ class FlowControlApp(tk.Tk):
             self.valve_commands = self.daq.write_valves([False, False, False])
         except DaqError as exc:
             stop_error += f" / 밸브 닫힘 실패: {exc}"
+        try:
+            self.daq.write_igniter(False)
+        except DaqError as exc:
+            stop_error += f" / 점화기 SSR OFF 실패: {exc}"
         self.mp5y.close()
         self.monitor_button.configure(text="측정 시작", style="Start.TButton")
         self.feedback_button.configure(text="피드백 제어 시작", style="Start.TButton")
         self.level_button.configure(text="자동 제어 시작", style="Start.TButton")
+        if hasattr(self, "igniter_button"):
+            self.igniter_button.configure(
+                text="점화기 수동 SSR: OFF", style="Stop.TButton"
+            )
         self.level_master_status.configure(text="안전 정지 · 모든 밸브 닫힘 명령")
         self._render_level_states([False] * 6, ["오류 · 안전 닫힘"] * 3)
         self.output_value.configure(text=f"AO: {self.current_ao:.3f} V")
         self.status_canvas.itemconfigure(self.status_dot, fill=COLORS["bad"])
         self.status_label.configure(text=f"안전 정지: {error}{stop_error}")
+
+    def toggle_igniter(self) -> None:
+        """Manual ignition SSR toggle (DO3)."""
+        if not self.daq.level_available:
+            # Level availability ~= NI 9422/9477 present; keeps UX consistent.
+            messagebox.showerror("NI-DAQ 오류", "NI 9422/9477 연결을 확인하세요.")
+            return
+        self.igniter_on = not self.igniter_on
+        try:
+            self.daq.write_igniter(self.igniter_on)
+        except DaqError as exc:
+            self.igniter_on = False
+            self._show_hardware_error(exc)
+            return
+        self.igniter_button.configure(
+            text=f"점화기 수동 SSR: {'ON' if self.igniter_on else 'OFF'}",
+            style="Start.TButton" if self.igniter_on else "Stop.TButton",
+        )
+
+    def _update_flame_status(self) -> None:
+        try:
+            flame = self.daq.read_flame()
+        except DaqError as exc:
+            # Don't hard-fail the loop for a single DI read.
+            self.flame_label.configure(text=f"화염 감지(DI6): 에러({exc})")
+            return
+        self.flame_label.configure(text=f"화염 감지(DI6): {'ON' if flame else 'OFF'}")
 
     def _update_levels(self) -> None:
         values = self.daq.read_levels()
@@ -1261,6 +1325,8 @@ class FlowControlApp(tk.Tk):
             "ao_pump": self.channels.ao_pump,
             "level_inputs": self.channels.level_inputs,
             "valve_outputs": self.channels.valve_outputs,
+            "flame_input": self.channels.flame_input,
+            "igniter_output": self.channels.igniter_output,
             "mp5y_port": self.mp5y_config.port,
             "mp5y_slave_id": self.mp5y_config.slave_id,
             "mp5y_baudrate": self.mp5y_config.baudrate,
@@ -1290,6 +1356,8 @@ class FlowControlApp(tk.Tk):
         self.channels.ao_pump = str(data.get("ao_pump", self.channels.ao_pump))
         self.channels.level_inputs = str(data.get("level_inputs", self.channels.level_inputs))
         self.channels.valve_outputs = str(data.get("valve_outputs", self.channels.valve_outputs))
+        self.channels.flame_input = str(data.get("flame_input", self.channels.flame_input))
+        self.channels.igniter_output = str(data.get("igniter_output", self.channels.igniter_output))
         self.daq.channels = self.channels
         self.mp5y_config.port = str(data.get("mp5y_port", "COM3"))
         self.mp5y_config.slave_id = int(data.get("mp5y_slave_id", 1))
