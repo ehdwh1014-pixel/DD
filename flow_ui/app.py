@@ -182,14 +182,14 @@ class FlowControlApp(tk.Tk):
         self.ICON_PNG = self.ICON_DIR / "app_icon.png"
         screen_w = max(self.winfo_screenwidth(), 800)
         screen_h = max(self.winfo_screenheight(), 480)
-        self.touch_mode = screen_w <= 1100 and screen_h <= 700
+        self.touch_mode = screen_w <= 1100 or screen_h <= 700
         if self.touch_mode:
-            width, height = screen_w, screen_h
+            width, height = min(screen_w, 1024), min(screen_h, 600)
             self.geometry(f"{width}x{height}+0+0")
             self.minsize(min(800, width), min(480, height))
         else:
-            width = min(1120, int(screen_w * 0.92))
-            height = min(640, int(screen_h * 0.82))
+            width = min(1024, int(screen_w * 0.90))
+            height = min(600, int(screen_h * 0.82))
             self.geometry(f"{width}x{height}")
             self.minsize(min(900, width), min(520, height))
         self.configure(bg=COLORS["bg"])
@@ -252,7 +252,7 @@ class FlowControlApp(tk.Tk):
             "Title.TLabel",
             background=COLORS["bg"],
             foreground=COLORS["title"],
-            font=("Segoe UI", 22, "bold"),
+            font=("Segoe UI", 16 if self.touch_mode else 18, "bold"),
         )
         style.configure(
             "Sub.TLabel",
@@ -270,7 +270,7 @@ class FlowControlApp(tk.Tk):
             "PanelTitle.TLabel",
             background=COLORS["panel"],
             foreground=COLORS["title"],
-            font=("Segoe UI", 14, "bold"),
+            font=("Segoe UI", 12, "bold"),
         )
         style.configure(
             "Hint.TLabel",
@@ -294,23 +294,23 @@ class FlowControlApp(tk.Tk):
             "ValueCompact.TLabel",
             background=COLORS["panel"],
             foreground=COLORS["value"],
-            font=("Segoe UI", 18, "bold"),
+            font=("Segoe UI", 16, "bold"),
         )
         style.configure(
             "FlameStatus.TLabel",
             background=COLORS["panel"],
             foreground=COLORS["muted"],
-            font=("Segoe UI", 12, "bold"),
+            font=("Segoe UI", 11, "bold"),
         )
         style.configure(
             "Compact.TButton",
-            font=("Segoe UI", 9, "bold"),
-            padding=(10, 6),
+            font=("Segoe UI", 10, "bold"),
+            padding=(8, 5),
         )
         style.configure(
             "TButton",
             font=("Segoe UI", 10, "bold"),
-            padding=(14, 9),
+            padding=(10, 7),
             background=COLORS["accent_soft"],
             foreground=COLORS["title"],
             borderwidth=0,
@@ -320,16 +320,16 @@ class FlowControlApp(tk.Tk):
         style.map("Nav.TButton", background=[("active", "#D6E2EC")])
         style.configure("NavActive.TButton", background=COLORS["accent"], foreground="#FFFFFF")
         style.map("NavActive.TButton", background=[("active", COLORS["accent_deep"])])
-        style.configure("Start.TButton", background="#BFE4D5", foreground="#174B3A", padding=(12, 11))
+        style.configure("Start.TButton", background="#BFE4D5", foreground="#174B3A", padding=(10, 8))
         style.map("Start.TButton", background=[("active", "#9FD4C1")])
-        style.configure("Stop.TButton", background="#F1D5D8", foreground="#722F37", padding=(12, 11))
+        style.configure("Stop.TButton", background="#F1D5D8", foreground="#722F37", padding=(10, 8))
         style.map("Stop.TButton", background=[("active", "#E7BDC2")])
         style.configure(
             "TEntry",
             fieldbackground=COLORS["panel_alt"],
             foreground=COLORS["title"],
             insertcolor=COLORS["title"],
-            padding=7,
+            padding=5,
             borderwidth=1,
         )
         style.configure(
@@ -337,8 +337,8 @@ class FlowControlApp(tk.Tk):
             fieldbackground=COLORS["accent_soft"],
             foreground=COLORS["accent_deep"],
             insertcolor=COLORS["accent_deep"],
-            font=("Segoe UI", 17, "bold"),
-            padding=9,
+            font=("Segoe UI", 14, "bold"),
+            padding=5,
             borderwidth=2,
         )
         style.map(
@@ -413,7 +413,7 @@ class FlowControlApp(tk.Tk):
         )
 
     def _build_layout(self) -> None:
-        header_padding = (10, 6, 10, 4) if self.touch_mode else (14, 10, 14, 6)
+        header_padding = (8, 4, 8, 2) if self.touch_mode else (10, 6, 10, 4)
         header = ttk.Frame(self, style="App.TFrame", padding=header_padding)
         header.pack(fill="x")
 
@@ -451,7 +451,7 @@ class FlowControlApp(tk.Tk):
 
         self.nav_buttons: dict[str, ttk.Button] = {}
 
-        content_padding = (8, 2, 8, 4) if self.touch_mode else (14, 4, 14, 8)
+        content_padding = (6, 2, 6, 4) if self.touch_mode else (8, 2, 8, 4)
         self.content = ttk.Frame(self, style="App.TFrame", padding=content_padding)
         self.content.pack(fill="both", expand=True)
         self.pages = {
@@ -462,7 +462,7 @@ class FlowControlApp(tk.Tk):
 
     def panel(self, parent: tk.Misc) -> ttk.Frame:
         wrapper = tk.Frame(parent, bg=COLORS["border"], padx=1, pady=1)
-        frame = ttk.Frame(wrapper, style="Panel.TFrame", padding=14)
+        frame = ttk.Frame(wrapper, style="Panel.TFrame", padding=8 if self.touch_mode else 10)
         frame.pack(fill="both", expand=True)
         frame._card = wrapper  # type: ignore[attr-defined]
         return frame
@@ -472,9 +472,9 @@ class FlowControlApp(tk.Tk):
 
     def field(self, parent: tk.Misc, row: int, label: str, default: str, hint: str = "") -> tk.StringVar:
         value = tk.StringVar(value=default)
-        ttk.Label(parent, text=label, style="Panel.TLabel").grid(row=row, column=0, sticky="w", pady=4)
-        entry = ttk.Entry(parent, textvariable=value, width=14)
-        entry.grid(row=row, column=1, sticky="e", padx=(12, 0))
+        ttk.Label(parent, text=label, style="Panel.TLabel").grid(row=row, column=0, sticky="w", pady=2)
+        entry = ttk.Entry(parent, textvariable=value, width=10)
+        entry.grid(row=row, column=1, sticky="e", padx=(8, 0))
         if self.touch_mode:
             keypad_ranges = {
                 "펄스정수 (ml/P)": (0.001, 999.0, 3),
@@ -675,7 +675,7 @@ class FlowControlApp(tk.Tk):
 
         self.feedback_button = ttk.Button(
             current,
-            text="피드백 제어 시작",
+            text="제어 시작",
             style="TouchStart.TButton",
             command=self.toggle_feedback,
         )
@@ -777,7 +777,7 @@ class FlowControlApp(tk.Tk):
             side="left"
         )
         self.level_master_status = ttk.Label(
-            heading, text="DAQ 연결 대기 · 밸브 안전 닫힘", style="ValueSmall.TLabel"
+            heading, text="대기 · 밸브 닫힘", style="ValueSmall.TLabel"
         )
         self.level_master_status.pack(side="right")
 
@@ -808,7 +808,7 @@ class FlowControlApp(tk.Tk):
             ttk.Separator(card, orient="horizontal").pack(fill="x", pady=12)
             valve = ttk.Label(card, text="닫힘", style="TouchSV.TLabel")
             valve.pack(anchor="w")
-            logic = ttk.Label(card, text="DAQ 연결 대기", style="Panel.TLabel")
+            logic = ttk.Label(card, text="대기", style="Panel.TLabel")
             logic.pack(anchor="w", pady=(8, 0))
             self.level_high_labels.append(high)
             self.level_low_labels.append(low)
@@ -844,14 +844,13 @@ class FlowControlApp(tk.Tk):
         ign_row.pack(anchor="w")
         self.igniter_button = ttk.Button(
             ign_row,
-            text="",
+            text="IGN OFF",
             style="TouchStop.TButton",
             command=self.toggle_igniter,
-            width=4,
+            width=10,
         )
         self.igniter_button.pack(side="left")
-        self.igniter_caption = ttk.Label(ign_row, text="IGN", style="TouchSV.TLabel")
-        self.igniter_caption.pack(side="left", padx=(8, 0))
+        self.igniter_caption = self.igniter_button
         return section
 
     def _create_desktop_feedback_page(self) -> ttk.Frame:
@@ -863,110 +862,105 @@ class FlowControlApp(tk.Tk):
         page.rowconfigure(1, weight=0)
 
         controls = self.panel(page)
-        self.place_panel(controls, row=0, column=0, sticky="nsw", padx=(0, 10))
-        ttk.Label(controls, text="펌프 피드백 제어", style="PanelTitle.TLabel").grid(
-            row=0, column=0, columnspan=2, sticky="w", pady=(0, 4)
+        self.place_panel(controls, row=0, column=0, sticky="nw", padx=(0, 6))
+        ttk.Label(controls, text="펌프 제어", style="PanelTitle.TLabel").grid(
+            row=0, column=0, columnspan=2, sticky="w", pady=(0, 2)
         )
 
         self.fb_pulse_ml = self.field(controls, 1, "펄스정수 (ml/P)", "0.46")
-        self.p_gain = self.field(controls, 3, "P Gain (V·min/cc)", "0.020")
-        self.i_gain = self.field(controls, 5, "I Gain (V·min/cc·s)", "0.005")
-        self.lpf_cutoff = self.field(controls, 7, "LPF 차단주파수 (Hz)", "0.8", "0 = 필터 미사용")
+        self.p_gain = self.field(controls, 3, "P Gain", "0.020")
+        self.i_gain = self.field(controls, 5, "I Gain", "0.005")
+        self.lpf_cutoff = self.field(controls, 7, "LPF (Hz)", "0.8", "0 = OFF")
 
         self.feedback_button = ttk.Button(
-            controls, text="피드백 제어 시작", style="Start.TButton", command=self.toggle_feedback
+            controls, text="제어 시작", style="Start.TButton", command=self.toggle_feedback
         )
         self.feedback_button.grid(row=9, column=0, sticky="ew", pady=(4, 0))
-        ttk.Button(controls, text="설정 저장", command=self.save_settings).grid(
-            row=9, column=1, sticky="ew", padx=(8, 0), pady=(4, 0)
+        ttk.Button(controls, text="저장", command=self.save_settings).grid(
+            row=9, column=1, sticky="ew", padx=(6, 0), pady=(4, 0)
         )
 
         focus = self.panel(page)
-        self.place_panel(focus, row=0, column=1, sticky="nsew", padx=(0, 10))
-        ttk.Label(focus, text="CURRENT FLOW", style="PanelTitle.TLabel").pack(
-            anchor="w", pady=(0, 5)
-        )
+        self.place_panel(focus, row=0, column=1, sticky="nsew", padx=(0, 6))
+        ttk.Label(focus, text="CURRENT FLOW", style="PanelTitle.TLabel").pack(anchor="w")
         self.focus_pv = ttk.Label(focus, text="PV  0.0 cc/min", style="ValueCompact.TLabel")
-        self.focus_pv.pack(anchor="w", pady=(0, 6))
+        self.focus_pv.pack(anchor="w", pady=(2, 2))
         self.pv_value = self.focus_pv
 
-        ttk.Label(focus, text="SV 목표 유량 (cc/min)", style="Panel.TLabel").pack(anchor="w")
+        ttk.Label(focus, text="SV (cc/min)", style="Panel.TLabel").pack(anchor="w")
         self.sv = tk.StringVar(value="120.0")
         sv_row = ttk.Frame(focus, style="Panel.TFrame")
-        sv_row.pack(anchor="w", pady=(3, 6))
+        sv_row.pack(anchor="w", pady=(2, 4))
         self.sv_entry = ttk.Entry(
             sv_row,
             textvariable=self.sv,
             style="Highlight.TEntry",
             justify="center",
-            width=8,
+            width=7,
         )
         self.sv_entry.pack(side="left")
-        # Kept as hidden update targets; the compact desktop card intentionally
-        # shows only PV, editable SV, flame state, and ignition control.
         self.focus_err = ttk.Label(focus, text="오차: 0.0 cc/min", style="ValueSmall.TLabel")
         self.fb_hz = ttk.Label(focus, text="MP5Y: 대기", style="Hint.TLabel")
         self.output_value = ttk.Label(focus, text="AO: 0.000 V", style="ValueSmall.TLabel")
+        self.output_value.pack(anchor="w", pady=(0, 4))
 
-        ttk.Separator(focus, orient="horizontal").pack(fill="x", pady=(7, 7))
         flame_row = ttk.Frame(focus, style="Panel.TFrame")
-        flame_row.pack(anchor="w")
+        flame_row.pack(anchor="w", pady=(2, 0))
         self.flame_canvas = tk.Canvas(
-            flame_row, width=34, height=34, bg=COLORS["panel"], highlightthickness=0
+            flame_row, width=28, height=28, bg=COLORS["panel"], highlightthickness=0
         )
         self.flame_canvas.pack(side="left")
         self.flame_ring = self.flame_canvas.create_oval(
-            2, 2, 32, 32, fill="#F1F5F9", outline="#CBD5E1", width=2
+            1, 1, 27, 27, fill="#F1F5F9", outline="#CBD5E1", width=2
         )
         self.flame_lamp = self.flame_canvas.create_oval(
-            8, 8, 26, 26, fill="#CBD5E1", outline="#94A3B8", width=2
+            6, 6, 22, 22, fill="#CBD5E1", outline="#94A3B8", width=2
         )
         self.flame_label = ttk.Label(flame_row, text="FD", style="FlameStatus.TLabel")
-        self.flame_label.pack(side="left", padx=(6, 14))
+        self.flame_label.pack(side="left", padx=(4, 8))
         self.igniter_button = ttk.Button(
             flame_row,
-            text="",
+            text="IGN OFF",
             style="Compact.TButton",
             command=self.toggle_igniter,
-            width=3,
+            width=8,
         )
         self.igniter_button.pack(side="left")
-        self.igniter_caption = ttk.Label(flame_row, text="IGN", style="FlameStatus.TLabel")
-        self.igniter_caption.pack(side="left", padx=(6, 0))
+        self.igniter_caption = self.igniter_button
 
-        graphs = ttk.Frame(page, style="App.TFrame", width=292)
+        graphs = ttk.Frame(page, style="App.TFrame", width=250)
         graphs.grid(row=0, column=2, sticky="ns")
         graphs.grid_propagate(False)
         graphs.rowconfigure((0, 1), weight=1)
         graphs.columnconfigure(0, weight=1)
         self.feedback_graph = TrendGraph(
             graphs,
-            "PV / SV 유량",
+            "PV / SV",
             [("PV", COLORS["pv"]), ("SV", COLORS["sv"])],
             0,
             200,
             "cc/min",
         )
-        self.feedback_graph.configure(height=96)
-        self.feedback_graph.grid(row=0, column=0, sticky="nsew", pady=(0, 8))
+        self.feedback_graph.configure(height=78)
+        self.feedback_graph.grid(row=0, column=0, sticky="nsew", pady=(0, 4))
         self.feedback_ao_graph = TrendGraph(
-            graphs, "AO 펌프 전압", [("AO", COLORS["ao"])], 0, 5, "V"
+            graphs, "AO (V)", [("AO", COLORS["ao"])], 0, 5, "V"
         )
-        self.feedback_ao_graph.configure(height=96)
+        self.feedback_ao_graph.configure(height=78)
         self.feedback_ao_graph.grid(row=1, column=0, sticky="nsew")
 
         level_section = self.panel(page)
-        self.place_panel(level_section, row=1, column=0, columnspan=3, sticky="nsew", pady=(8, 0))
+        self.place_panel(level_section, row=1, column=0, columnspan=3, sticky="ew", pady=(6, 0))
         top = ttk.Frame(level_section, style="Panel.TFrame")
         top.pack(fill="x")
-        ttk.Label(top, text="레벨 / 밸브 자동 제어", style="PanelTitle.TLabel").pack(side="left")
+        ttk.Label(top, text="레벨 / 밸브", style="PanelTitle.TLabel").pack(side="left")
         self.level_master_status = ttk.Label(
-            top, text="DAQ 연결 대기 · 밸브 안전 닫힘", style="Panel.TLabel"
+            top, text="대기 · 밸브 닫힘", style="Hint.TLabel"
         )
         self.level_master_status.pack(side="right")
 
         cards = ttk.Frame(level_section, style="Panel.TFrame")
-        cards.pack(fill="x", pady=(6, 0))
+        cards.pack(fill="x", pady=(3, 0))
         for i in range(3):
             cards.columnconfigure(i, weight=1)
 
@@ -975,23 +969,27 @@ class FlowControlApp(tk.Tk):
         self.valve_status_labels = []
         self.level_logic_labels = []
         definitions = (
-            ("밸브 1 · 급수", "LOW→열림 / HIGH→닫힘"),
-            ("밸브 2 · 배수", "LOW→닫힘 / HIGH→열림"),
-            ("밸브 3 · 배수", "LOW→닫힘 / HIGH→열림"),
+            ("V1 급수", "L열림 / H닫힘"),
+            ("V2 배수", "L닫힘 / H열림"),
+            ("V3 배수", "L닫힘 / H열림"),
         )
         for index, (name, rule) in enumerate(definitions):
-            card = ttk.Frame(cards, style="Panel.TFrame", padding=(8, 4))
-            card.grid(row=0, column=index, sticky="nsew", padx=(0 if index == 0 else 4, 0))
-            ttk.Label(card, text=name, style="PanelTitle.TLabel").pack(anchor="w")
-            ttk.Label(card, text=rule, style="Hint.TLabel").pack(anchor="w", pady=(1, 4))
-            high = ttk.Label(card, text="● HIGH OFF", style="Panel.TLabel")
-            high.pack(anchor="w")
-            low = ttk.Label(card, text="● LOW  OFF", style="Panel.TLabel")
-            low.pack(anchor="w", pady=(1, 4))
-            valve = ttk.Label(card, text="닫힘", style="ValueSmall.TLabel")
-            valve.pack(anchor="w")
-            logic = ttk.Label(card, text="대기", style="Panel.TLabel")
-            logic.pack(anchor="w", pady=(2, 0))
+            card = ttk.Frame(cards, style="Panel.TFrame", padding=(4, 2))
+            card.grid(row=0, column=index, sticky="ew", padx=(0 if index == 0 else 3, 0))
+            head = ttk.Frame(card, style="Panel.TFrame")
+            head.pack(fill="x")
+            ttk.Label(head, text=name, style="PanelTitle.TLabel").pack(side="left")
+            valve = ttk.Label(head, text="닫힘", style="ValueSmall.TLabel")
+            valve.pack(side="right")
+            ttk.Label(card, text=rule, style="Hint.TLabel").pack(anchor="w")
+            sensor_row = ttk.Frame(card, style="Panel.TFrame")
+            sensor_row.pack(fill="x", pady=(1, 0))
+            high = ttk.Label(sensor_row, text="● HIGH OFF", style="Hint.TLabel")
+            high.pack(side="left")
+            low = ttk.Label(sensor_row, text="● LOW OFF", style="Hint.TLabel")
+            low.pack(side="left", padx=(8, 0))
+            logic = ttk.Label(card, text="대기", style="Hint.TLabel")
+            logic.pack(anchor="w")
             self.level_high_labels.append(high)
             self.level_low_labels.append(low)
             self.valve_status_labels.append(valve)
@@ -1596,7 +1594,7 @@ class FlowControlApp(tk.Tk):
             self.output_value.configure(text=f"AO: {self.current_ao:.3f} V")
 
         self.feedback_button.configure(
-            text="피드백 제어 중지" if self.feedback_running else "피드백 제어 시작",
+            text="제어 중지" if self.feedback_running else "제어 시작",
             style=(
                 "TouchStop.TButton"
                 if self.touch_mode and self.feedback_running
@@ -1618,7 +1616,7 @@ class FlowControlApp(tk.Tk):
             self.level_master_status.configure(text=f"자동 기동 실패 · {exc}")
             return False
         self.level_running = True
-        self.level_master_status.configure(text="DAQ 연결 · 자동 제어 동작 중")
+        self.level_master_status.configure(text="자동 제어 중")
         return True
 
     # --------------------------------------------------------------- loops
@@ -1632,8 +1630,8 @@ class FlowControlApp(tk.Tk):
             self.level_running = False
             self._level_was_available = False
             self.valve_commands = [False, False, False]
-            self.level_master_status.configure(text="DAQ 연결 대기 · 밸브 안전 닫힘")
-            self._render_level_states([False] * 6, ["DAQ 연결 대기"] * 3)
+            self.level_master_status.configure(text="대기 · 밸브 닫힘")
+            self._render_level_states([False] * 6, ["대기"] * 3)
         # Avoid holding the serial port locked during idle; probe then release.
         mp_ok = self.mp5y.check_connection()
         self.mp5y.close()
@@ -1724,7 +1722,7 @@ class FlowControlApp(tk.Tk):
         self.mp5y.close()
         self.monitor_button.configure(text="측정 시작", style="Start.TButton")
         self.feedback_button.configure(
-            text="피드백 제어 시작",
+            text="제어 시작",
             style="TouchStart.TButton" if self.touch_mode else "Start.TButton",
         )
         if hasattr(self, "igniter_button"):
@@ -1762,8 +1760,8 @@ class FlowControlApp(tk.Tk):
         if self.touch_mode:
             style = "TouchStart.TButton" if on else "TouchStop.TButton"
         else:
-            style = "Start.TButton" if on else "Compact.TButton"
-        self.igniter_button.configure(text="", style=style)
+            style = "Start.TButton" if on else "Stop.TButton"
+        self.igniter_button.configure(text=("IGN ON" if on else "IGN OFF"), style=style)
 
     def _update_flame_status(self) -> None:
         self.flame_label.configure(text="FD")
@@ -1816,9 +1814,9 @@ class FlowControlApp(tk.Tk):
         self.valve_commands = self.daq.write_valves(commands)
         self._render_level_states(values, [decision.state for decision in decisions])
         if any(decision.fault for decision in decisions):
-            self.level_master_status.configure(text="센서 충돌 감지 · 해당 밸브 안전 닫힘")
+            self.level_master_status.configure(text="센서 충돌 · 안전 닫힘")
         else:
-            self.level_master_status.configure(text="자동 제어 동작 중")
+            self.level_master_status.configure(text="자동 제어 중")
 
     def _render_level_states(self, values: list[bool], states: list[str]) -> None:
         for index in range(3):
