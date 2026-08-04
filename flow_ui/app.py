@@ -320,9 +320,9 @@ class FlowControlApp(tk.Tk):
         style.map("Nav.TButton", background=[("active", "#D6E2EC")])
         style.configure("NavActive.TButton", background=COLORS["accent"], foreground="#FFFFFF")
         style.map("NavActive.TButton", background=[("active", COLORS["accent_deep"])])
-        style.configure("Start.TButton", background="#BFE4D5", foreground="#174B3A")
+        style.configure("Start.TButton", background="#BFE4D5", foreground="#174B3A", padding=(12, 11))
         style.map("Start.TButton", background=[("active", "#9FD4C1")])
-        style.configure("Stop.TButton", background="#F1D5D8", foreground="#722F37")
+        style.configure("Stop.TButton", background="#F1D5D8", foreground="#722F37", padding=(12, 11))
         style.map("Stop.TButton", background=[("active", "#E7BDC2")])
         style.configure(
             "TEntry",
