@@ -159,11 +159,27 @@ class TrendGraph(tk.Canvas):
 
 class FlowControlApp(tk.Tk):
     POLL_MS = 120
-    SETTINGS_PATH = Path(__file__).with_name("settings.json")
+
+    @staticmethod
+    def _bundle_dir() -> Path:
+        # PyInstaller one-file extracts assets under sys._MEIPASS.
+        if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+            return Path(sys._MEIPASS) / "flow_ui"
+        return Path(__file__).resolve().parent
+
+    @classmethod
+    def _runtime_dir(cls) -> Path:
+        if getattr(sys, "frozen", False):
+            return Path(sys.executable).resolve().parent
+        return Path(__file__).resolve().parent
 
     def __init__(self) -> None:
         super().__init__()
         self.title("Pulse Flow · Feedback Control")
+        self.SETTINGS_PATH = self._runtime_dir() / "settings.json"
+        self.ICON_DIR = self._bundle_dir() / "assets"
+        self.ICON_ICO = self.ICON_DIR / "app_icon.ico"
+        self.ICON_PNG = self.ICON_DIR / "app_icon.png"
         screen_w = max(self.winfo_screenwidth(), 1024)
         screen_h = max(self.winfo_screenheight(), 700)
         width = min(1280, int(screen_w * 0.96))
@@ -171,6 +187,7 @@ class FlowControlApp(tk.Tk):
         self.geometry(f"{width}x{height}")
         self.minsize(min(940, width), min(560, height))
         self.configure(bg=COLORS["bg"])
+        self._apply_window_icon()
 
         self.channels = ChannelConfig()
         self.mp5y_config = Mp5yConfig(port="COM3")
@@ -200,6 +217,19 @@ class FlowControlApp(tk.Tk):
         self.refresh_connection()
         self.after(self.POLL_MS, self.update_loop)
         self.protocol("WM_DELETE_WINDOW", self.on_close)
+
+    def _apply_window_icon(self) -> None:
+        """Use flow_ui/assets/app_icon.* for the window/taskbar icon."""
+        try:
+            if self.ICON_ICO.exists():
+                # Windows title-bar / taskbar prefers .ico
+                self.iconbitmap(default=str(self.ICON_ICO))
+            if self.ICON_PNG.exists():
+                self._icon_image = tk.PhotoImage(file=str(self.ICON_PNG))
+                self.iconphoto(True, self._icon_image)
+        except tk.TclError:
+            # Missing/invalid icon should never block startup.
+            pass
 
     # ------------------------------------------------------------------ UI
     def _build_style(self) -> None:

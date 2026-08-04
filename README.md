@@ -91,6 +91,16 @@ py -m pip install -r requirements.txt
 py pump.py
 ```
 
+## 아이콘 바꾸기
+
+창/작업표시줄·exe 아이콘 파일:
+
+- `flow_ui/assets/app_icon.ico`  (Windows / exe)
+- `flow_ui/assets/app_icon.png`  (창 아이콘 보조)
+
+원하는 이미지로 위 두 파일을 덮어쓰면 됩니다.  
+exe까지 아이콘을 넣으려면 프로젝트 루트에서 `build_exe.bat` 실행 → `dist/PulseFlow.exe`
+
 ## 화면
 흰색·네이비·청록 기반의 15인치 노트북용 단일 대시보드입니다.
 

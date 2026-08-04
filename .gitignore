@@ -9,3 +9,7 @@ venv/
 .vscode/
 flow_ui/settings.json
 *.log
+build/
+dist/
+*.spec
+
