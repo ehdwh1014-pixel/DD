@@ -26,6 +26,10 @@ AO_MODULE = "cDAQ2Mod1"  # NI 9264
 DI_MODULE = "cDAQ2Mod2"  # NI 9422
 
 
+class DaqError(RuntimeError):
+    """Raised when an expected hardware operation cannot be completed."""
+
+
 @dataclass
 class ChannelConfig:
     """First channel on each module."""
@@ -48,6 +52,8 @@ class DaqService:
         self.device_summary = "NI 9264 / NI 9422 대기"
         self._nidaqmx = None
         self._counter_task = None
+        self._ao_task = None
+        self._ao_channel: str | None = None
         self._last_count = 0
         self._last_count_at = time.monotonic()
         self._gate_count = 0
@@ -127,6 +133,7 @@ class DaqService:
             self._counter_task = None
             self.error = f"카운터 시작 오류: {exc}"
             self._last_count = 0
+            raise DaqError(self.error) from exc
 
     def stop_counter(self) -> None:
         task = self._counter_task
@@ -162,8 +169,12 @@ class DaqService:
                 self._last_count_at = now
             except Exception as exc:  # noqa: BLE001
                 self.error = f"카운터 읽기 오류: {exc}"
-                return self._last_hz, max(now - self._gate_started_at, 1e-6), self._gate_count
+                self.stop_counter()
+                raise DaqError(self.error) from exc
         else:
+            if self.available and self._nidaqmx is not None:
+                self.error = "카운터 태스크가 실행 중이 아닙니다."
+                raise DaqError(self.error)
             # Simulation ~120 cc/min with 0.46 ml/P => ~4.35 Hz
             target_hz = 4.35 + 0.25 * math.sin(now * 0.7) + random.uniform(-0.05, 0.05)
             expected = target_hz * poll_elapsed
@@ -197,14 +208,35 @@ class DaqService:
         if not (self.available and self._nidaqmx):
             return voltage
         try:
-            with self._nidaqmx.Task() as task:
+            if self._ao_task is not None and self._ao_channel != channel:
+                self._close_ao_task()
+            if self._ao_task is None:
+                task = self._nidaqmx.Task()
                 task.ao_channels.add_ao_voltage_chan(channel, min_val=0.0, max_val=5.0)
-                task.write(voltage, auto_start=True)
+                self._ao_task = task
+                self._ao_channel = channel
+            self._ao_task.write(voltage, auto_start=True)
             self.error = "연결됨"
         except Exception as exc:  # noqa: BLE001
             self.error = f"AO 출력 오류: {exc}"
+            self._close_ao_task()
+            raise DaqError(self.error) from exc
         return voltage
+
+    def _close_ao_task(self) -> None:
+        task = self._ao_task
+        self._ao_task = None
+        self._ao_channel = None
+        if task is not None:
+            try:
+                task.close()
+            except Exception:  # noqa: BLE001
+                pass
 
     def close(self) -> None:
         self.stop_counter()
-        self.write_voltage(0.0)
+        try:
+            self.write_voltage(0.0)
+        except DaqError:
+            pass
+        self._close_ao_task()

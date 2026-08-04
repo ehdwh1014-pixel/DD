@@ -21,7 +21,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from flow_ui.control import LowPassFilter, PIController
-from flow_ui.daq_service import ChannelConfig, DaqService
+from flow_ui.daq_service import ChannelConfig, DaqError, DaqService
 from flow_ui.flow_math import DEFAULT_PULSE_ML, frequency_to_ccpm
 
 
@@ -583,14 +583,19 @@ class FlowControlApp(tk.Tk):
         if self.feedback_running:
             messagebox.showinfo("안내", "피드백 제어 중에는 모니터를 따로 시작할 수 없습니다.")
             return
-        self.monitor_running = not self.monitor_running
-        if self.monitor_running:
-            self.daq.start_counter()
+        if not self.monitor_running:
+            try:
+                self.daq.start_counter()
+            except DaqError as exc:
+                self._show_daq_error(exc)
+                return
+            self.monitor_running = True
             self.lpf.reset()
             self._last_loop_at = time.monotonic()
             self.mon_flow_graph.clear()
             self.mon_hz_graph.clear()
         else:
+            self.monitor_running = False
             self.daq.stop_counter()
         self.monitor_button.configure(
             text="측정 중지" if self.monitor_running else "측정 시작",
@@ -604,13 +609,21 @@ class FlowControlApp(tk.Tk):
         if not 0.0 <= voltage <= 5.0:
             messagebox.showerror("범위 오류", "AO 출력은 0.0 ~ 5.0 V여야 합니다.")
             return
-        self.current_ao = self.daq.write_voltage(voltage)
+        try:
+            self.current_ao = self.daq.write_voltage(voltage)
+        except DaqError as exc:
+            self._show_daq_error(exc)
+            return
         self.ao_value.configure(text=f"현재 출력: {self.current_ao:.3f} V")
         self.ao_graph.add(self.current_ao)
 
     def zero_ao(self) -> None:
         self.ao_voltage.set("0.0")
-        self.current_ao = self.daq.write_voltage(0.0)
+        try:
+            self.current_ao = self.daq.write_voltage(0.0)
+        except DaqError as exc:
+            self._show_daq_error(exc)
+            return
         self.ao_value.configure(text=f"현재 출력: {self.current_ao:.3f} V")
         self.ao_graph.add(self.current_ao)
 
@@ -636,9 +649,13 @@ class FlowControlApp(tk.Tk):
         if self.monitor_running:
             self.toggle_monitor()
 
-        self.feedback_running = not self.feedback_running
-        if self.feedback_running:
-            self.daq.start_counter()
+        if not self.feedback_running:
+            try:
+                self.daq.start_counter()
+            except DaqError as exc:
+                self._show_daq_error(exc)
+                return
+            self.feedback_running = True
             self.pi.reset()
             self.lpf.reset()
             self._last_loop_at = time.monotonic()
@@ -647,8 +664,13 @@ class FlowControlApp(tk.Tk):
             sv = self.number_silent(self.sv, 120)
             self.feedback_graph.set_scale(0, max(200.0, sv * 1.5), "cc/min")
         else:
+            self.feedback_running = False
             self.daq.stop_counter()
-            self.current_ao = self.daq.write_voltage(0.0)
+            try:
+                self.current_ao = self.daq.write_voltage(0.0)
+            except DaqError as exc:
+                self._safe_stop(exc)
+                return
             self.output_value.configure(text=f"AO: {self.current_ao:.3f} V")
 
         self.feedback_button.configure(
@@ -676,9 +698,32 @@ class FlowControlApp(tk.Tk):
                 self._update_monitor()
             if self.feedback_running:
                 self._update_feedback()
+        except DaqError as exc:
+            self._safe_stop(exc)
         except Exception as exc:  # noqa: BLE001
-            self.status_label.configure(text=f"루프 오류: {exc}")
+            self._safe_stop(RuntimeError(f"루프 오류: {exc}"))
         self.after(self.POLL_MS, self.update_loop)
+
+    def _show_daq_error(self, error: Exception) -> None:
+        self.status_canvas.itemconfigure(self.status_dot, fill=COLORS["bad"])
+        self.status_label.configure(text=str(error))
+        messagebox.showerror("DAQ 오류", str(error))
+
+    def _safe_stop(self, error: Exception) -> None:
+        """Stop measurement and force the pump command to zero after a loop fault."""
+        self.monitor_running = False
+        self.feedback_running = False
+        self.daq.stop_counter()
+        stop_error = ""
+        try:
+            self.current_ao = self.daq.write_voltage(0.0)
+        except DaqError as exc:
+            stop_error = f" / 0 V 출력 실패: {exc}"
+        self.monitor_button.configure(text="측정 시작", style="Start.TButton")
+        self.feedback_button.configure(text="피드백 제어 시작", style="Start.TButton")
+        self.output_value.configure(text=f"AO: {self.current_ao:.3f} V")
+        self.status_canvas.itemconfigure(self.status_dot, fill=COLORS["bad"])
+        self.status_label.configure(text=f"안전 정지: {error}{stop_error}")
 
     def _update_monitor(self) -> None:
         hz, _elapsed, _delta = self.daq.read_pulse_rate()
