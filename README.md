@@ -1,93 +1,67 @@
-# Pulse Flow Feedback Control (NI 9422 + NI 9264)
+# Pulse Flow Feedback Control (MP5Y-25 + NI 9264)
 
-VS Code / Python 데스크톱 UI로 **펄스 유량계 → DI 카운터 → 유량 환산 → PI + LPF 피드백 → AO 펌프 전압**을 제어합니다.
+VS Code / Python 데스크톱 UI로 **펄스 유량계 → MP5Y-25 → USB-RS485(Modbus) → 유량 PV → PI + LPF → NI 9264 AO 펌프**를 제어합니다.
 
-## 하드웨어 (NI MAX 기준)
+## 하드웨어
 
-| 슬롯 | 모델 | Device Name | 용도 | 채널 |
-|------|------|-------------|------|------|
-| Chassis | cDAQ-9178 | `cDAQ2` | 카운터 백플레인 | `ctr0` |
-| 1 | NI 9264 | `cDAQ2Mod1` | 펌프 AO 0~5 V | `ao0` |
-| 2 | NI 9422 | `cDAQ2Mod2` | 유량계 펄스 카운트 | `PFI0` / **DI0** (첫 채널) |
+| 역할 | 장치 | 연결 |
+|------|------|------|
+| 유량 표시/환산 | Autonics **MP5Y-25** | 펄스 유량계 입력 + RS485 |
+| PC 통신 | USB-RS485 컨버터 | **COM3**, 9600 8N2, Addr 1 |
+| 펌프 AO | NI **9264** `cDAQ2Mod1/ao0` | 0~5 V |
 
-- 카운터 태스크: `cDAQ2/ctr0`
-- 펄스 입력 터미널: `/cDAQ2Mod2/PFI0` (= DI0)
-- AO 출력: `cDAQ2Mod1/ao0`
+> NI 9422로 직접 카운트하지 않습니다. 유량은 MP5Y Modbus PV를 사용합니다.
 
-> NI 9425는 cDAQ에서 카운터를 쓸 수 없습니다. 펄스 카운트는 **9422**를 사용합니다.
+## 유량계
 
-## 유량계 (확정)
-
-- 모델: **Aichi Tokei OF05ZAT-AR**
-- 출력: **AR = 전압 펄스** (외부 풀업 저항 불필요)
 - 펄스정수: **0.46 ml/P**
-- 사용 유량대: 약 **120 cc/min** → 약 **4.35 Hz** (9422 한도 4 kHz 대비 충분)
-- 전원: **12 V 또는 24 V DC**
+- MP5Y 권장 모드: **F1 주파수**
+- 환산: `유량(cc/min) = Hz × 0.46 × 60`
 
-환산식:
+MP5Y에서 프리스케일로 cc/min을 이미 표시한다면, UI **채널 설정**에서 표시모드를 `flow_ccpm`으로 바꾸세요.
 
-```text
-유량(cc/min) = (Δ펄스 / Δt초) × 0.46 × 60
-             = 주파수(Hz) × 27.6
-```
+## 배선
 
-## 최종 배선 (OF05ZAT-AR ↔ NI 9422 + NI 9264)
+### 1) 유량계 → MP5Y-25
 
-AR 타입은 유량계가 스스로 High/Low 전압 펄스를 내보내므로 **풀업 저항 없이** 연결합니다.
+펄스 Out / GND를 MP5Y 입력 단자에 연결하고, NPN/PNP 입력 설정을 유량계에 맞춥니다.
 
-### 1) 유량계 → NI 9422 (DI0)
+### 2) MP5Y-25 → USB-RS485 → PC
 
-| 유량계 | 연결 |
-|--------|------|
-| 🔴 Red (+V) | 파워서플라이 **+12V 또는 +24V** |
-| ⚫ Black (GND) | 파워서플라이 **GND (−)** |
-| ⚪ White (Signal Out) | NI 9422 **DI0+** |
-| — | NI 9422 **DI0−** → 파워서플라이 **GND (−)** ⭐ 필수 |
+| MP5Y | 컨버터 |
+|------|--------|
+| A(+) | A |
+| B(−) | B |
 
-```text
-PSU +12/24V ─── Red (유량계)
-PSU GND     ──┬─ Black (유량계)
-              ├─ DI0− (NI 9422)
-              └─ AO GND (NI 9264)
+PC 장치관리자에서 COM 포트가 **COM3**인지 확인하세요. (다르면 UI 채널 설정에서 변경)
 
-White (유량계 Out) ─── DI0+ (NI 9422)
-```
+통신 기본값(MP5Y 출하):
 
-### 2) 펌프 → NI 9264 (ao0)
+- Baud 9600
+- Data 8 / Parity None / Stop **2**
+- Address **1**
 
-| 펌프 / AO | 연결 |
-|-----------|------|
-| 펌프 전압 입력 (+) | NI 9264 **ao0** |
-| 펌프 GND / AO COM | 파워서플라이 **GND (−)** 에 공통 |
+### 3) 펌프 → NI 9264
 
-### 3) 공통 GND (노이즈 방지)
-
-파워서플라이 **마이너스(−)** 한 점에 아래를 **모두** 묶습니다.
-
-1. 유량계 Black  
-2. NI 9422 **DI0−**  
-3. NI 9264 **AO GND / COM**
-
-기준 전위가 하나로 맞아야 펄스 카운트와 AO 펌프 제어가 안정적입니다.
+| 펌프 | NI |
+|------|-----|
+| 전압 입력 (+) | `cDAQ2Mod1/ao0` |
+| GND / COM | AO GND |
 
 ## 실행 (VS Code)
 
 ```bash
-python -m pip install -r requirements.txt
-python -m flow_ui
-# 또는
-python flow_ui/app.py
+py -m pip install -r requirements.txt
+py pump.py
 ```
 
-NI 드라이버/하드웨어가 없어도 **시뮬레이션 모드**로 UI·그래프·제어 루프를 확인할 수 있습니다.  
-실제 장치는 NI-DAQmx 드라이버 + `nidaqmx` 패키지가 필요합니다.
+COM3 또는 NI가 없어도 **시뮬레이션 모드**로 UI를 확인할 수 있습니다.
 
 ## 화면
 
-1. **유량 모니터** — 펄스 주파수 / cc/min 실시간 추이
-2. **AO 수동 출력** — 펌프 전압 0~5 V 수동 테스트
-3. **유량 피드백 제어** — SV, **P Gain**, **I Gain**, **LPF** 설정 후 PI 제어
-4. **배선 가이드** 버튼 — OF05ZAT-AR 확정 배선 안내
+1. **유량 모니터** — MP5Y PV / 주파수 추이
+2. **AO 수동 출력** — 펌프 0~5 V 테스트
+3. **유량 피드백 제어** — SV, P Gain, I Gain, LPF
 
 제어식:
 
@@ -95,17 +69,13 @@ NI 드라이버/하드웨어가 없어도 **시뮬레이션 모드**로 UI·그�
 AO = clamp(P × (SV − PV) + I × ∫(SV − PV) dt, 0, 5 V)
 ```
 
-- PV: 펄스 유량 + 1차 로우패스 필터
-- 출력 포화 시 적분 anti-windup 적용
-- 설정은 `flow_ui/settings.json`에 저장
+설정은 `flow_ui/settings.json`에 저장됩니다.
 
-## 기본 게인 (시작점)
+## 기본 게인
 
-| 항목 | 기본값 | 설명 |
-|------|--------|------|
-| SV | 120 cc/min | 목표 유량 |
-| P Gain | 0.020 V·min/cc | 오차 10 cc → 0.2 V |
-| I Gain | 0.005 V·min/cc·s | 정상상태 오차 보정 |
-| LPF | 0.8 Hz | 저주파 펄스 지터 완화 |
-
-현장 펌프/배관에 맞춰 P→I 순으로 튜닝하세요.
+| 항목 | 기본값 |
+|------|--------|
+| SV | 120 cc/min |
+| P Gain | 0.020 V·min/cc |
+| I Gain | 0.005 V·min/cc·s |
+| LPF | 0.8 Hz |

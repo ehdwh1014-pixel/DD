@@ -1,14 +1,17 @@
-"""Pulse flow feedback control UI for NI 9422 + NI 9264.
+"""Pulse flow feedback control UI: MP5Y-25 PV + NI 9264 AO.
 
 Run:
   python -m flow_ui.app
   or
   python flow_ui/app.py
+  or
+  python pump.py
 """
 
 from __future__ import annotations
 
 import json
+import math
 import sys
 import time
 import tkinter as tk
@@ -22,7 +25,8 @@ if __package__ in (None, ""):
 
 from flow_ui.control import LowPassFilter, PIController
 from flow_ui.daq_service import ChannelConfig, DaqError, DaqService
-from flow_ui.flow_math import DEFAULT_PULSE_ML, frequency_to_ccpm
+from flow_ui.flow_math import DEFAULT_PULSE_ML
+from flow_ui.mp5y_service import Mp5yConfig, Mp5yError, Mp5yService
 
 
 # Soft blush / rose palette — clean, balanced, feminine.
@@ -164,7 +168,9 @@ class FlowControlApp(tk.Tk):
         self.configure(bg=COLORS["bg"])
 
         self.channels = ChannelConfig()
+        self.mp5y_config = Mp5yConfig(port="COM3")
         self.daq = DaqService(self.channels)
+        self.mp5y = Mp5yService(self.mp5y_config)
         self.lpf = LowPassFilter()
         self.pi = PIController(0.0, 5.0)
 
@@ -182,7 +188,6 @@ class FlowControlApp(tk.Tk):
         self.show_page("monitor")
         self.refresh_connection()
         self.after(self.POLL_MS, self.update_loop)
-        self.after(1500, self.refresh_connection)
         self.protocol("WM_DELETE_WINDOW", self.on_close)
 
     # ------------------------------------------------------------------ UI
@@ -269,7 +274,7 @@ class FlowControlApp(tk.Tk):
         ttk.Label(titles, text="Pulse Flow Control", style="Title.TLabel").pack(anchor="w")
         ttk.Label(
             titles,
-            text="NI 9422 Counter  ·  NI 9264 AO  ·  OF05ZAT-AR 0.46 ml/P",
+            text="MP5Y-25 RS485  ·  NI 9264 AO  ·  0.46 ml/P",
             style="Sub.TLabel",
         ).pack(anchor="w", pady=(2, 0))
 
@@ -314,7 +319,6 @@ class FlowControlApp(tk.Tk):
         wrapper = tk.Frame(parent, bg=COLORS["border"], padx=1, pady=1)
         frame = ttk.Frame(wrapper, style="Panel.TFrame", padding=20)
         frame.pack(fill="both", expand=True)
-        # Outer card widget used by place_panel().
         frame._card = wrapper  # type: ignore[attr-defined]
         return frame
 
@@ -347,15 +351,15 @@ class FlowControlApp(tk.Tk):
         self.mon_flow.grid(row=3, column=0, columnspan=2, sticky="w", pady=(18, 4))
         self.mon_hz = ttk.Label(controls, text="주파수: 0.00 Hz", style="ValueSmall.TLabel")
         self.mon_hz.grid(row=4, column=0, columnspan=2, sticky="w")
-        self.mon_pulses = ttk.Label(controls, text="누적 펄스: 0", style="Panel.TLabel")
-        self.mon_pulses.grid(row=5, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        self.mon_raw = ttk.Label(controls, text="MP5Y raw: 0", style="Panel.TLabel")
+        self.mon_raw.grid(row=5, column=0, columnspan=2, sticky="w", pady=(6, 0))
         self.monitor_button = ttk.Button(
             controls, text="측정 시작", style="Start.TButton", command=self.toggle_monitor
         )
         self.monitor_button.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(22, 0))
         ttk.Label(
             controls,
-            text="OF05ZAT-AR → 9422 DI0+/DI0− (PFI0)\n풀업 없이 전압 펄스 카운트",
+            text="유량계 → MP5Y-25 → USB-RS485 (COM3)\n기본: MP5Y 주파수(Hz) × 0.46 × 60",
             style="Hint.TLabel",
             wraplength=250,
             justify="left",
@@ -396,7 +400,7 @@ class FlowControlApp(tk.Tk):
         self.ao_value.grid(row=5, column=0, columnspan=2, sticky="w", pady=(22, 0))
         ttk.Label(
             controls,
-            text="9264 ao0 → 펌프 전압\nAO GND는 유량계/DI0−와 공통 GND",
+            text="9264 ao0 → 펌프 전압\nAO GND는 펌프 COM과 공통",
             style="Hint.TLabel",
             justify="left",
         ).grid(row=6, column=0, columnspan=2, sticky="w", pady=(10, 0))
@@ -438,7 +442,7 @@ class FlowControlApp(tk.Tk):
         )
         ttk.Label(
             controls,
-            text="AO = clamp(P×오차 + I×∫오차 dt, 0~5V)\nPV는 펄스 유량 + LPF",
+            text="PV = MP5Y Modbus 값\nAO = clamp(P×오차 + I×∫오차 dt, 0~5V)",
             style="Hint.TLabel",
             wraplength=250,
             justify="left",
@@ -488,46 +492,47 @@ class FlowControlApp(tk.Tk):
 
     def open_wiring_guide(self) -> None:
         dialog = tk.Toplevel(self)
-        dialog.title("OF05ZAT-AR 배선 가이드")
+        dialog.title("MP5Y-25 + NI 9264 배선 가이드")
         dialog.configure(bg=COLORS["bg"])
-        dialog.geometry("560x520")
+        dialog.geometry("600x560")
         dialog.transient(self)
         dialog.grab_set()
 
         frame = ttk.Frame(dialog, style="Panel.TFrame", padding=22)
         frame.pack(fill="both", expand=True, padx=16, pady=16)
 
-        ttk.Label(frame, text="OF05ZAT-AR · 전압 펄스 배선", style="PanelTitle.TLabel").pack(
+        ttk.Label(frame, text="펄스 유량계 · MP5Y-25 · NI 9264", style="PanelTitle.TLabel").pack(
             anchor="w"
         )
         ttk.Label(
             frame,
-            text="AR 타입은 외부 풀업 저항이 필요 없습니다.",
+            text="유량은 RS485(Modbus)로 읽고, 펌프만 NI-DAQ AO로 제어합니다.",
             style="Hint.TLabel",
         ).pack(anchor="w", pady=(4, 14))
 
         guide = (
-            "【유량계 → NI 9422 DI0】\n"
-            "  Red   (+V)     →  PSU +12V 또는 +24V\n"
-            "  Black (GND)    →  PSU GND (−)\n"
-            "  White (Out)    →  NI 9422  DI0+\n"
-            "  NI 9422 DI0−   →  PSU GND (−)   ★ 필수\n"
+            "【유량계 → MP5Y-25】\n"
+            "  펄스 Out / GND  →  MP5Y 입력 단자 (NPN 또는 PNP 설정 일치)\n"
+            "  펄스정수 0.46 ml/P\n"
+            "  MP5Y 동작모드 권장: F1 주파수\n"
+            "\n"
+            "【MP5Y-25 → USB-RS485】\n"
+            "  MP5Y A(+)  →  컨버터 A\n"
+            "  MP5Y B(−)  →  컨버터 B\n"
+            "  PC COM 포트: COM3\n"
+            "  통신: 9600 / 8 / None / Stop2 / Addr 1 (출하 기본)\n"
             "\n"
             "【펌프 → NI 9264 ao0】\n"
             "  펌프 + 입력    →  NI 9264  ao0\n"
-            "  펌프 GND/COM   →  PSU GND (−)\n"
+            "  펌프 GND/COM   →  AO GND\n"
             "\n"
-            "【공통 GND — 한 점에 묶기】\n"
-            "  1) 유량계 Black\n"
-            "  2) NI 9422 DI0−\n"
-            "  3) NI 9264 AO GND\n"
-            "\n"
-            "채널: 카운터 cDAQ2/ctr0 ← /cDAQ2Mod2/PFI0\n"
-            "      펌프 AO  cDAQ2Mod1/ao0  (0~5 V)"
+            "환산: 유량(cc/min) = Hz × 0.46 × 60\n"
+            "MP5Y에 프리스케일로 cc/min을 띄우면\n"
+            "채널 설정에서 표시모드를 'flow_ccpm'으로 바꾸세요."
         )
         box = tk.Text(
             frame,
-            height=18,
+            height=20,
             wrap="word",
             font=("Consolas", 11),
             bg=COLORS["panel_alt"],
@@ -543,39 +548,59 @@ class FlowControlApp(tk.Tk):
 
     def open_settings(self) -> None:
         dialog = tk.Toplevel(self)
-        dialog.title("채널 설정")
+        dialog.title("채널 / 통신 설정")
         dialog.configure(bg=COLORS["bg"])
-        dialog.geometry("460x280")
+        dialog.geometry("520x420")
         dialog.transient(self)
         dialog.grab_set()
 
         frame = ttk.Frame(dialog, style="Panel.TFrame", padding=20)
         frame.pack(fill="both", expand=True, padx=16, pady=16)
-        ttk.Label(frame, text="DAQmx 채널", style="PanelTitle.TLabel").grid(
+        ttk.Label(frame, text="MP5Y / NI-DAQ", style="PanelTitle.TLabel").grid(
             row=0, column=0, columnspan=2, sticky="w", pady=(0, 12)
         )
 
         ao_var = tk.StringVar(value=self.channels.ao_pump)
-        ctr_var = tk.StringVar(value=self.channels.counter)
-        term_var = tk.StringVar(value=self.channels.counter_term)
+        port_var = tk.StringVar(value=self.mp5y_config.port)
+        slave_var = tk.StringVar(value=str(self.mp5y_config.slave_id))
+        baud_var = tk.StringVar(value=str(self.mp5y_config.baudrate))
+        mode_var = tk.StringVar(value=self.mp5y_config.value_mode)
         for row, label, var in (
             (1, "AO 펌프 채널", ao_var),
-            (2, "카운터 채널", ctr_var),
-            (3, "카운터 터미널", term_var),
+            (2, "MP5Y COM 포트", port_var),
+            (3, "MP5Y 주소", slave_var),
+            (4, "MP5Y Baud", baud_var),
+            (5, "표시모드 (frequency_hz/flow_ccpm)", mode_var),
         ):
             ttk.Label(frame, text=label, style="Panel.TLabel").grid(row=row, column=0, sticky="w", pady=8)
             ttk.Entry(frame, textvariable=var, width=28).grid(row=row, column=1, padx=(12, 0))
 
         def apply() -> None:
-            self.channels.ao_pump = ao_var.get().strip()
-            self.channels.counter = ctr_var.get().strip()
-            self.channels.counter_term = term_var.get().strip()
+            self.channels.ao_pump = ao_var.get().strip() or self.channels.ao_pump
             self.daq.channels = self.channels
+            self.mp5y_config.port = port_var.get().strip() or "COM3"
+            try:
+                self.mp5y_config.slave_id = int(slave_var.get().strip())
+            except ValueError:
+                messagebox.showerror("입력 오류", "MP5Y 주소는 숫자여야 합니다.")
+                return
+            try:
+                self.mp5y_config.baudrate = int(baud_var.get().strip())
+            except ValueError:
+                messagebox.showerror("입력 오류", "Baud는 숫자여야 합니다.")
+                return
+            mode = mode_var.get().strip()
+            if mode not in {"frequency_hz", "flow_ccpm"}:
+                messagebox.showerror("입력 오류", "표시모드는 frequency_hz 또는 flow_ccpm")
+                return
+            self.mp5y_config.value_mode = mode
+            self.mp5y.close()
+            self.mp5y = Mp5yService(self.mp5y_config)
             self.refresh_connection()
             dialog.destroy()
 
         ttk.Button(frame, text="적용", style="Start.TButton", command=apply).grid(
-            row=4, column=0, columnspan=2, sticky="ew", pady=(18, 0)
+            row=6, column=0, columnspan=2, sticky="ew", pady=(18, 0)
         )
 
     # -------------------------------------------------------------- actions
@@ -584,11 +609,6 @@ class FlowControlApp(tk.Tk):
             messagebox.showinfo("안내", "피드백 제어 중에는 모니터를 따로 시작할 수 없습니다.")
             return
         if not self.monitor_running:
-            try:
-                self.daq.start_counter()
-            except DaqError as exc:
-                self._show_daq_error(exc)
-                return
             self.monitor_running = True
             self.lpf.reset()
             self._last_loop_at = time.monotonic()
@@ -596,7 +616,6 @@ class FlowControlApp(tk.Tk):
             self.mon_hz_graph.clear()
         else:
             self.monitor_running = False
-            self.daq.stop_counter()
         self.monitor_button.configure(
             text="측정 중지" if self.monitor_running else "측정 시작",
             style="Stop.TButton" if self.monitor_running else "Start.TButton",
@@ -612,7 +631,7 @@ class FlowControlApp(tk.Tk):
         try:
             self.current_ao = self.daq.write_voltage(voltage)
         except DaqError as exc:
-            self._show_daq_error(exc)
+            self._show_hardware_error(exc)
             return
         self.ao_value.configure(text=f"현재 출력: {self.current_ao:.3f} V")
         self.ao_graph.add(self.current_ao)
@@ -622,7 +641,7 @@ class FlowControlApp(tk.Tk):
         try:
             self.current_ao = self.daq.write_voltage(0.0)
         except DaqError as exc:
-            self._show_daq_error(exc)
+            self._show_hardware_error(exc)
             return
         self.ao_value.configure(text=f"현재 출력: {self.current_ao:.3f} V")
         self.ao_graph.add(self.current_ao)
@@ -650,11 +669,6 @@ class FlowControlApp(tk.Tk):
             self.toggle_monitor()
 
         if not self.feedback_running:
-            try:
-                self.daq.start_counter()
-            except DaqError as exc:
-                self._show_daq_error(exc)
-                return
             self.feedback_running = True
             self.pi.reset()
             self.lpf.reset()
@@ -665,7 +679,6 @@ class FlowControlApp(tk.Tk):
             self.feedback_graph.set_scale(0, max(200.0, sv * 1.5), "cc/min")
         else:
             self.feedback_running = False
-            self.daq.stop_counter()
             try:
                 self.current_ao = self.daq.write_voltage(0.0)
             except DaqError as exc:
@@ -680,17 +693,32 @@ class FlowControlApp(tk.Tk):
 
     # --------------------------------------------------------------- loops
     def refresh_connection(self) -> None:
-        connected = self.daq.check_connection()
+        ao_ok = self.daq.check_connection()
+        # Avoid holding the serial port locked during idle; probe then release.
+        mp_ok = self.mp5y.check_connection()
+        self.mp5y.close()
+
+        connected = ao_ok or mp_ok
         self.status_on = not self.status_on if connected else False
-        color = COLORS["ok"] if connected and self.status_on else (
-            "#A8D8C0" if connected else COLORS["bad"]
-        )
+        if ao_ok and mp_ok:
+            color = COLORS["ok"] if self.status_on else "#A8D8C0"
+            text = "MP5Y + NI-DAQ 연결됨"
+        elif mp_ok:
+            color = COLORS["warn"]
+            text = f"MP5Y OK / AO: {self.daq.error}"
+        elif ao_ok:
+            color = COLORS["warn"]
+            text = f"AO OK / MP5Y: {self.mp5y.error}"
+        else:
+            color = COLORS["bad"]
+            text = "시뮬레이션 (COM3/NI 미연결)"
+
         self.status_canvas.itemconfigure(self.status_dot, fill=color)
-        self.status_label.configure(
-            text=self.daq.error if not connected else "NI-DAQ 연결됨"
+        self.status_label.configure(text=text)
+        self.device_label.configure(
+            text=f"{self.mp5y.device_summary}  |  {self.daq.device_summary}"
         )
-        self.device_label.configure(text=self.daq.device_summary)
-        self.after(1000, self.refresh_connection)
+        self.after(2000, self.refresh_connection)
 
     def update_loop(self) -> None:
         try:
@@ -698,59 +726,68 @@ class FlowControlApp(tk.Tk):
                 self._update_monitor()
             if self.feedback_running:
                 self._update_feedback()
-        except DaqError as exc:
+        except (Mp5yError, DaqError) as exc:
             self._safe_stop(exc)
         except Exception as exc:  # noqa: BLE001
             self._safe_stop(RuntimeError(f"루프 오류: {exc}"))
         self.after(self.POLL_MS, self.update_loop)
 
-    def _show_daq_error(self, error: Exception) -> None:
+    def _show_hardware_error(self, error: Exception) -> None:
         self.status_canvas.itemconfigure(self.status_dot, fill=COLORS["bad"])
         self.status_label.configure(text=str(error))
-        messagebox.showerror("DAQ 오류", str(error))
+        messagebox.showerror("하드웨어 오류", str(error))
 
     def _safe_stop(self, error: Exception) -> None:
-        """Stop measurement and force the pump command to zero after a loop fault."""
         self.monitor_running = False
         self.feedback_running = False
-        self.daq.stop_counter()
         stop_error = ""
         try:
             self.current_ao = self.daq.write_voltage(0.0)
         except DaqError as exc:
             stop_error = f" / 0 V 출력 실패: {exc}"
+        self.mp5y.close()
         self.monitor_button.configure(text="측정 시작", style="Start.TButton")
         self.feedback_button.configure(text="피드백 제어 시작", style="Start.TButton")
         self.output_value.configure(text=f"AO: {self.current_ao:.3f} V")
         self.status_canvas.itemconfigure(self.status_dot, fill=COLORS["bad"])
         self.status_label.configure(text=f"안전 정지: {error}{stop_error}")
 
+    def _read_mp5y(self, pulse_ml: float) -> tuple[float, float, int, int]:
+        try:
+            return self.mp5y.read_flow(pulse_ml=pulse_ml)
+        except Mp5yError:
+            # Offline / missing converter: keep the UI usable in simulation.
+            # If AO hardware is live, fail closed so the pump is not driven
+            # from a fake PV.
+            if self.daq.available:
+                raise
+            return self.mp5y.simulate_flow(pulse_ml=pulse_ml)
+
     def _update_monitor(self) -> None:
-        hz, _elapsed, _delta = self.daq.read_pulse_rate()
         pulse_ml = self.number_silent(self.pulse_ml, DEFAULT_PULSE_ML)
-        raw = frequency_to_ccpm(hz, pulse_ml)
+        raw_flow, hz, raw, dot = self._read_mp5y(pulse_ml)
         now = time.monotonic()
         dt = max(now - (self._last_loop_at or now), 0.001)
         self._last_loop_at = now
-        flow = self.lpf.update(raw, dt, 1.0)
+        flow = self.lpf.update(raw_flow, dt, 1.0)
         self.filtered_flow = flow
+        hz_text = "—" if math.isnan(hz) else f"{hz:.2f}"
         self.mon_flow.configure(text=f"{flow:.1f} cc/min")
-        self.mon_hz.configure(text=f"주파수: {hz:.2f} Hz")
-        self.mon_pulses.configure(text=f"누적 펄스: {self.daq._last_count}")
+        self.mon_hz.configure(text=f"주파수: {hz_text} Hz")
+        self.mon_raw.configure(text=f"MP5Y raw: {raw} (DOT={dot})")
         self.mon_flow_graph.set_scale(0, max(200.0, flow * 1.4 + 20), "cc/min")
         self.mon_flow_graph.add(flow)
-        self.mon_hz_graph.add(hz)
+        self.mon_hz_graph.add(0.0 if math.isnan(hz) else hz)
 
     def _update_feedback(self) -> None:
-        hz, _elapsed, _delta = self.daq.read_pulse_rate()
         pulse_ml = self.number_silent(self.fb_pulse_ml, DEFAULT_PULSE_ML)
-        raw = frequency_to_ccpm(hz, pulse_ml)
+        raw_flow, hz, _raw, _dot = self._read_mp5y(pulse_ml)
         now = time.monotonic()
         dt = max(now - (self._last_loop_at or now), 0.001)
         self._last_loop_at = now
 
         cutoff = self.number_silent(self.lpf_cutoff, 0.8)
-        pv = self.lpf.update(raw, dt, cutoff)
+        pv = self.lpf.update(raw_flow, dt, cutoff)
         self.filtered_flow = pv
         sv = self.number_silent(self.sv, 120.0)
         p_gain = self.number_silent(self.p_gain, 0.02)
@@ -759,8 +796,9 @@ class FlowControlApp(tk.Tk):
         ao = self.pi.update(sv, pv, p_gain, i_gain, dt)
         self.current_ao = self.daq.write_voltage(ao)
 
+        hz_text = "—" if math.isnan(hz) else f"{hz:.2f}"
         self.pv_value.configure(text=f"PV: {pv:.1f} cc/min")
-        self.fb_hz.configure(text=f"주파수: {hz:.2f} Hz")
+        self.fb_hz.configure(text=f"주파수: {hz_text} Hz")
         self.output_value.configure(text=f"AO: {self.current_ao:.3f} V")
         self.feedback_graph.set_scale(0, max(200.0, sv * 1.5), "cc/min")
         self.feedback_graph.add(pv, sv)
@@ -775,8 +813,10 @@ class FlowControlApp(tk.Tk):
             "i_gain": self.i_gain.get(),
             "lpf_cutoff": self.lpf_cutoff.get(),
             "ao_pump": self.channels.ao_pump,
-            "counter": self.channels.counter,
-            "counter_term": self.channels.counter_term,
+            "mp5y_port": self.mp5y_config.port,
+            "mp5y_slave_id": self.mp5y_config.slave_id,
+            "mp5y_baudrate": self.mp5y_config.baudrate,
+            "mp5y_value_mode": self.mp5y_config.value_mode,
         }
         try:
             self.SETTINGS_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
@@ -798,15 +838,19 @@ class FlowControlApp(tk.Tk):
         self.i_gain.set(str(data.get("i_gain", "0.005")))
         self.lpf_cutoff.set(str(data.get("lpf_cutoff", "0.8")))
         self.channels.ao_pump = str(data.get("ao_pump", self.channels.ao_pump))
-        self.channels.counter = str(data.get("counter", self.channels.counter))
-        self.channels.counter_term = str(data.get("counter_term", self.channels.counter_term))
         self.daq.channels = self.channels
+        self.mp5y_config.port = str(data.get("mp5y_port", "COM3"))
+        self.mp5y_config.slave_id = int(data.get("mp5y_slave_id", 1))
+        self.mp5y_config.baudrate = int(data.get("mp5y_baudrate", 9600))
+        self.mp5y_config.value_mode = str(data.get("mp5y_value_mode", "frequency_hz"))
+        self.mp5y = Mp5yService(self.mp5y_config)
 
     def on_close(self) -> None:
         try:
             self.feedback_running = False
             self.monitor_running = False
             self.daq.close()
+            self.mp5y.close()
         finally:
             self.destroy()
 

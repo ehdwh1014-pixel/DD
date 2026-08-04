@@ -1,4 +1,4 @@
-"""Unit tests for flow conversion and PI / LPF helpers."""
+"""Unit tests for flow conversion, PI / LPF, and MP5Y decoding helpers."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import unittest
 
 from flow_ui.control import LowPassFilter, PIController
 from flow_ui.flow_math import frequency_to_ccpm, pulses_to_ccpm
+from flow_ui.mp5y_service import Mp5yConfig, Mp5yService
 
 
 class FlowMathTests(unittest.TestCase):
@@ -37,6 +38,20 @@ class ControlTests(unittest.TestCase):
         pi = PIController(0.0, 5.0)
         out = pi.update(setpoint=1000, process_value=0, p_gain=1.0, i_gain=0.0, dt=0.1)
         self.assertEqual(out, 5.0)
+
+
+class Mp5yDecodeTests(unittest.TestCase):
+    def test_decode_s32(self) -> None:
+        self.assertEqual(Mp5yService._decode_s32(0, 1200), 1200)
+        self.assertEqual(Mp5yService._decode_s32(0xFFFF, 0xFFFF), -1)
+
+    def test_simulate_returns_positive_flow(self) -> None:
+        service = Mp5yService(Mp5yConfig(port="COM3", value_mode="frequency_hz"))
+        flow, hz, raw, dot = service._simulate()
+        self.assertGreater(flow, 0.0)
+        self.assertGreater(hz, 0.0)
+        self.assertIsInstance(raw, int)
+        self.assertEqual(dot, 2)
 
 
 if __name__ == "__main__":
