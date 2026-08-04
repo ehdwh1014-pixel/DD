@@ -1,8 +1,10 @@
-"""NI-DAQmx boundary for NI 9264 AO pump output.
+"""NI-DAQmx boundary for pump AO, level DI, and valve DO.
 
 Hardware (NI MAX):
   Chassis : cDAQ-9178 -> cDAQ2
   Slot 1  : NI 9264   -> cDAQ2Mod1  (AO pump voltage, ao0, 0~5 V)
+  Slot 2  : NI 9422   -> cDAQ2Mod2  (three HIGH/LOW level inputs, DI0..DI5)
+  Slot 3  : NI 9477   -> cDAQ2Mod3  (three sinking valve outputs, DO0..DO2)
 
 Flow PV is read from Autonics MP5Y-25 over USB-RS485 (see mp5y_service.py).
 """
@@ -14,6 +16,8 @@ from dataclasses import dataclass
 
 CHASSIS = "cDAQ2"
 AO_MODULE = "cDAQ2Mod1"  # NI 9264
+DI_MODULE = "cDAQ2Mod2"  # NI 9422
+DO_MODULE = "cDAQ2Mod3"  # NI 9477
 
 
 class DaqError(RuntimeError):
@@ -22,24 +26,32 @@ class DaqError(RuntimeError):
 
 @dataclass
 class ChannelConfig:
-    """First AO channel on the 9264 module."""
+    """DAQmx channels used by the control application."""
 
     ao_pump: str = f"{AO_MODULE}/ao0"
+    level_inputs: str = f"{DI_MODULE}/port0/line0:5"
+    valve_outputs: str = f"{DO_MODULE}/port0/line0:2"
 
 
 class DaqService:
     """Analog output access with graceful simulation fallback."""
 
-    REQUIRED_DEVICES = (AO_MODULE,)
+    REQUIRED_DEVICES = (AO_MODULE, DI_MODULE, DO_MODULE)
 
     def __init__(self, channels: ChannelConfig | None = None) -> None:
         self.channels = channels or ChannelConfig()
         self.available = False
+        self.level_available = False
         self.error = "NI-DAQmx를 확인하는 중입니다."
-        self.device_summary = "NI 9264 대기"
+        self.device_summary = "NI 9264 / 9422 / 9477 대기"
         self._nidaqmx = None
         self._ao_task = None
         self._ao_channel: str | None = None
+        self._di_task = None
+        self._do_task = None
+        self._level_channel: str | None = None
+        self._valve_channel: str | None = None
+        self._last_valves = [False, False, False]
         try:
             import nidaqmx  # type: ignore
 
@@ -56,23 +68,79 @@ class DaqService:
                 device.name: device
                 for device in self._nidaqmx.system.System.local().devices
             }
+            self.available = AO_MODULE in devices
+            self.level_available = DI_MODULE in devices and DO_MODULE in devices
             missing = [name for name in self.REQUIRED_DEVICES if name not in devices]
-            if missing:
-                self.available = False
-                self.error = f"장치 없음: {', '.join(missing)}"
-                self.device_summary = "NI MAX에서 cDAQ2Mod1 확인 필요"
-                return False
-
-            ao = devices[AO_MODULE]
-            self.available = True
-            self.error = "연결됨"
-            self.device_summary = (
-                f"NI 9264 {AO_MODULE} (S/N {getattr(ao, 'serial_num', '?')})"
-            )
+            self.error = "연결됨" if not missing else f"장치 없음: {', '.join(missing)}"
+            states = [
+                f"9264 {'OK' if self.available else '없음'}",
+                f"9422 {'OK' if DI_MODULE in devices else '없음'}",
+                f"9477 {'OK' if DO_MODULE in devices else '없음'}",
+            ]
+            self.device_summary = " / ".join(states)
         except Exception as exc:  # noqa: BLE001 - keep UI alive on driver errors
             self.available = False
+            self.level_available = False
             self.error = f"통신 오류: {exc}"
-        return self.available
+        return self.available and self.level_available
+
+    def read_levels(self) -> list[bool]:
+        """Read [HIGH1, LOW1, HIGH2, LOW2, HIGH3, LOW3]."""
+        if not (self.level_available and self._nidaqmx):
+            return [False] * 6
+        try:
+            if self._di_task is not None and self._level_channel != self.channels.level_inputs:
+                self._close_di_task()
+            if self._di_task is None:
+                from nidaqmx.constants import LineGrouping  # type: ignore
+
+                task = self._nidaqmx.Task()
+                task.di_channels.add_di_chan(
+                    self.channels.level_inputs,
+                    line_grouping=LineGrouping.CHAN_PER_LINE,
+                )
+                self._di_task = task
+                self._level_channel = self.channels.level_inputs
+            values = self._di_task.read()
+            if isinstance(values, bool):
+                values = [values]
+            result = [bool(value) for value in values]
+            if len(result) != 6:
+                raise DaqError(f"레벨 입력 개수 오류: {len(result)}")
+            return result
+        except Exception as exc:  # noqa: BLE001
+            self._close_di_task()
+            if isinstance(exc, DaqError):
+                raise
+            raise DaqError(f"레벨 입력 오류: {exc}") from exc
+
+    def write_valves(self, opened: list[bool]) -> list[bool]:
+        """Write DO0..DO2. True turns the 9477 sink ON (white SIG -> 0 V)."""
+        if len(opened) != 3:
+            raise ValueError("밸브 출력은 3개여야 합니다.")
+        values = [bool(value) for value in opened]
+        if not (self.level_available and self._nidaqmx):
+            self._last_valves = values
+            return values
+        try:
+            if self._do_task is not None and self._valve_channel != self.channels.valve_outputs:
+                self._close_do_task()
+            if self._do_task is None:
+                from nidaqmx.constants import LineGrouping  # type: ignore
+
+                task = self._nidaqmx.Task()
+                task.do_channels.add_do_chan(
+                    self.channels.valve_outputs,
+                    line_grouping=LineGrouping.CHAN_PER_LINE,
+                )
+                self._do_task = task
+                self._valve_channel = self.channels.valve_outputs
+            self._do_task.write(values, auto_start=True)
+            self._last_valves = values
+            return values
+        except Exception as exc:  # noqa: BLE001
+            self._close_do_task()
+            raise DaqError(f"밸브 출력 오류: {exc}") from exc
 
     def write_voltage(self, voltage: float, channel: str | None = None) -> float:
         voltage = max(0.0, min(5.0, float(voltage)))
@@ -105,9 +173,35 @@ class DaqService:
             except Exception:  # noqa: BLE001
                 pass
 
+    def _close_di_task(self) -> None:
+        task = self._di_task
+        self._di_task = None
+        self._level_channel = None
+        if task is not None:
+            try:
+                task.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _close_do_task(self) -> None:
+        task = self._do_task
+        self._do_task = None
+        self._valve_channel = None
+        if task is not None:
+            try:
+                task.close()
+            except Exception:  # noqa: BLE001
+                pass
+
     def close(self) -> None:
+        try:
+            self.write_valves([False, False, False])
+        except DaqError:
+            pass
         try:
             self.write_voltage(0.0)
         except DaqError:
             pass
+        self._close_di_task()
+        self._close_do_task()
         self._close_ao_task()

@@ -6,6 +6,7 @@ import unittest
 
 from flow_ui.control import LowPassFilter, PIController
 from flow_ui.flow_math import frequency_to_ccpm, pulses_to_ccpm
+from flow_ui.level_control import ValveRole, decide_valve
 from flow_ui.mp5y_service import Mp5yConfig, Mp5yService
 
 
@@ -57,6 +58,22 @@ class Mp5yDecodeTests(unittest.TestCase):
         self.assertGreater(hz, 0.0)
         self.assertIsInstance(raw, int)
         self.assertEqual(dot, 2)
+
+
+class LevelControlTests(unittest.TestCase):
+    def test_supply_low_opens_and_high_closes(self) -> None:
+        self.assertTrue(decide_valve(ValveRole.SUPPLY, False, True, False).opened)
+        self.assertFalse(decide_valve(ValveRole.SUPPLY, True, False, True).opened)
+
+    def test_drain_low_closes_and_high_opens(self) -> None:
+        self.assertFalse(decide_valve(ValveRole.DRAIN, False, True, True).opened)
+        self.assertTrue(decide_valve(ValveRole.DRAIN, True, False, False).opened)
+
+    def test_neither_holds_and_both_closes(self) -> None:
+        self.assertTrue(decide_valve(ValveRole.SUPPLY, False, False, True).opened)
+        collision = decide_valve(ValveRole.DRAIN, True, True, True)
+        self.assertFalse(collision.opened)
+        self.assertTrue(collision.fault)
 
 
 if __name__ == "__main__":

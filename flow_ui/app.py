@@ -26,6 +26,7 @@ if __package__ in (None, ""):
 from flow_ui.control import LowPassFilter, PIController
 from flow_ui.daq_service import ChannelConfig, DaqError, DaqService
 from flow_ui.flow_math import DEFAULT_PULSE_ML
+from flow_ui.level_control import ValveRole, decide_valve
 from flow_ui.mp5y_service import MODE_NAMES, Mp5yConfig, Mp5yError, Mp5yService
 
 
@@ -177,6 +178,8 @@ class FlowControlApp(tk.Tk):
         self.active_page = "monitor"
         self.monitor_running = False
         self.feedback_running = False
+        self.level_running = False
+        self.valve_commands = [False, False, False]
         self.status_on = False
         self.current_ao = 0.0
         self.filtered_flow = 0.0
@@ -297,6 +300,7 @@ class FlowControlApp(tk.Tk):
             ("monitor", "유량 모니터"),
             ("ao", "AO 수동 출력"),
             ("feedback", "유량 피드백 제어"),
+            ("level", "레벨 / 밸브 제어"),
         ):
             button = ttk.Button(nav, text=label, style="Nav.TButton", command=lambda k=key: self.show_page(k))
             button.pack(side="left", fill="x", expand=True, padx=4)
@@ -308,6 +312,7 @@ class FlowControlApp(tk.Tk):
             "monitor": self._create_monitor_page(),
             "ao": self._create_ao_page(),
             "feedback": self._create_feedback_page(),
+            "level": self._create_level_page(),
         }
 
         footer = ttk.Frame(self, style="App.TFrame", padding=(28, 0, 28, 16))
@@ -476,6 +481,70 @@ class FlowControlApp(tk.Tk):
         self.feedback_ao_graph.grid(row=1, column=0, sticky="nsew")
         return page
 
+    def _create_level_page(self) -> ttk.Frame:
+        page = ttk.Frame(self.content, style="App.TFrame")
+        page.columnconfigure((0, 1, 2), weight=1)
+        page.rowconfigure(1, weight=1)
+
+        header = self.panel(page)
+        self.place_panel(header, row=0, column=0, columnspan=3, sticky="ew", pady=(0, 14))
+        ttk.Label(header, text="레벨 센서 · 전동 볼밸브 자동 제어", style="PanelTitle.TLabel").pack(
+            side="left"
+        )
+        self.level_button = ttk.Button(
+            header, text="자동 제어 시작", style="Start.TButton", command=self.toggle_level_control
+        )
+        self.level_button.pack(side="right")
+        self.level_master_status = ttk.Label(
+            header, text="정지 · 모든 밸브 닫힘 명령", style="Panel.TLabel"
+        )
+        self.level_master_status.pack(side="right", padx=18)
+
+        self.level_high_labels: list[ttk.Label] = []
+        self.level_low_labels: list[ttk.Label] = []
+        self.valve_status_labels: list[ttk.Label] = []
+        self.level_logic_labels: list[ttk.Label] = []
+        definitions = (
+            ("밸브 1 · 급수", "LOW → 열림  |  HIGH → 닫힘"),
+            ("밸브 2 · 배수", "LOW → 닫힘  |  HIGH → 열림"),
+            ("밸브 3 · 배수", "LOW → 닫힘  |  HIGH → 열림"),
+        )
+        for index, (name, rule) in enumerate(definitions):
+            card = self.panel(page)
+            self.place_panel(
+                card,
+                row=1,
+                column=index,
+                sticky="nsew",
+                padx=(0 if index == 0 else 7, 0 if index == 2 else 7),
+            )
+            ttk.Label(card, text=name, style="PanelTitle.TLabel").pack(anchor="w")
+            ttk.Label(card, text=rule, style="Hint.TLabel").pack(anchor="w", pady=(3, 18))
+
+            high = ttk.Label(card, text="● HIGH  OFF", style="Panel.TLabel")
+            high.pack(anchor="w", pady=5)
+            low = ttk.Label(card, text="● LOW   OFF", style="Panel.TLabel")
+            low.pack(anchor="w", pady=5)
+            self.level_high_labels.append(high)
+            self.level_low_labels.append(low)
+
+            ttk.Separator(card, orient="horizontal").pack(fill="x", pady=18)
+            valve = ttk.Label(card, text="닫힘 명령", style="Value.TLabel")
+            valve.pack(anchor="w")
+            logic = ttk.Label(card, text="대기", style="Panel.TLabel")
+            logic.pack(anchor="w", pady=(8, 0))
+            ttk.Label(
+                card,
+                text="9477 DO ON = 흰색 SIG를 0V로 당김\n표시는 실제 위치가 아닌 전기적 명령 상태",
+                style="Hint.TLabel",
+                justify="left",
+                wraplength=280,
+            ).pack(anchor="w", pady=(18, 0))
+            self.valve_status_labels.append(valve)
+            self.level_logic_labels.append(logic)
+
+        return page
+
     # ------------------------------------------------------------- helpers
     def show_page(self, page: str) -> None:
         self.active_page = page
@@ -501,21 +570,21 @@ class FlowControlApp(tk.Tk):
 
     def open_wiring_guide(self) -> None:
         dialog = tk.Toplevel(self)
-        dialog.title("MP5Y-25 + NI 9264 배선 가이드")
+        dialog.title("시스템 배선 가이드")
         dialog.configure(bg=COLORS["bg"])
-        dialog.geometry("600x560")
+        dialog.geometry("700x720")
         dialog.transient(self)
         dialog.grab_set()
 
         frame = ttk.Frame(dialog, style="Panel.TFrame", padding=22)
         frame.pack(fill="both", expand=True, padx=16, pady=16)
 
-        ttk.Label(frame, text="펄스 유량계 · MP5Y-25 · NI 9264", style="PanelTitle.TLabel").pack(
+        ttk.Label(frame, text="유량 · 펌프 · 레벨 · 밸브 배선", style="PanelTitle.TLabel").pack(
             anchor="w"
         )
         ttk.Label(
             frame,
-            text="유량은 RS485(Modbus)로 읽고, 펌프만 NI-DAQ AO로 제어합니다.",
+            text="NI 9422 DI0~5 / NI 9477 DO0~2 / NI 9264 ao0",
             style="Hint.TLabel",
         ).pack(anchor="w", pady=(4, 14))
 
@@ -537,6 +606,20 @@ class FlowControlApp(tk.Tk):
             "【펌프 → NI 9264 ao0】\n"
             "  펌프 + 입력    →  NI 9264  ao0\n"
             "  펌프 GND/COM   →  AO GND\n"
+            "\n"
+            "【레벨센서 3개 → NI 9422】\n"
+            "  +24V → 각 채널 DI+ / 센서 Black(COM) → 0V\n"
+            "  센서1 Red(HIGH) → DI0− / White(LOW) → DI1−\n"
+            "  센서2 Red(HIGH) → DI2− / White(LOW) → DI3−\n"
+            "  센서3 Red(HIGH) → DI4− / White(LOW) → DI5−\n"
+            "  ※ 접점 N/O·N/C 방향은 현장에서 ON 표시로 확인\n"
+            "\n"
+            "【전동볼밸브 3개 → NI 9477 (싱킹 출력)】\n"
+            "  밸브 Red(+24V) → PSU +24V\n"
+            "  밸브 White(SIG) → DO0 / DO1 / DO2\n"
+            "  밸브 Black(0V) + NI 9477 COM → PSU 0V\n"
+            "  DO ON = White를 0V로 당김 = 열림 명령\n"
+            "  ※ 0V 여부는 명령 확인이며 실제 기계 위치 피드백은 아님\n"
             "\n"
             "UI는 MP5Y 표시값(cc/min)을 그대로 PV로 사용합니다.\n"
             "(소프트웨어에서 ×0.46×60 를 다시 하지 않음)"
@@ -561,7 +644,7 @@ class FlowControlApp(tk.Tk):
         dialog = tk.Toplevel(self)
         dialog.title("채널 / 통신 설정")
         dialog.configure(bg=COLORS["bg"])
-        dialog.geometry("520x480")
+        dialog.geometry("590x570")
         dialog.transient(self)
         dialog.grab_set()
 
@@ -572,6 +655,8 @@ class FlowControlApp(tk.Tk):
         )
 
         ao_var = tk.StringVar(value=self.channels.ao_pump)
+        di_var = tk.StringVar(value=self.channels.level_inputs)
+        do_var = tk.StringVar(value=self.channels.valve_outputs)
         port_var = tk.StringVar(value=self.mp5y_config.port)
         slave_var = tk.StringVar(value=str(self.mp5y_config.slave_id))
         baud_var = tk.StringVar(value=str(self.mp5y_config.baudrate))
@@ -579,17 +664,21 @@ class FlowControlApp(tk.Tk):
         fmt_var = tk.StringVar(value=self.mp5y_config.pv_format)
         for row, label, var in (
             (1, "AO 펌프 채널", ao_var),
-            (2, "MP5Y COM 포트", port_var),
-            (3, "MP5Y 주소", slave_var),
-            (4, "MP5Y Baud", baud_var),
-            (5, "표시모드 (frequency_hz/flow_ccpm)", mode_var),
-            (6, "PV포맷 (int16/int32/dec32)", fmt_var),
+            (2, "레벨 입력 DI0:5", di_var),
+            (3, "밸브 출력 DO0:2", do_var),
+            (4, "MP5Y COM 포트", port_var),
+            (5, "MP5Y 주소", slave_var),
+            (6, "MP5Y Baud", baud_var),
+            (7, "표시모드 (frequency_hz/flow_ccpm)", mode_var),
+            (8, "PV포맷 (int16/int32/dec32)", fmt_var),
         ):
             ttk.Label(frame, text=label, style="Panel.TLabel").grid(row=row, column=0, sticky="w", pady=8)
             ttk.Entry(frame, textvariable=var, width=28).grid(row=row, column=1, padx=(12, 0))
 
         def apply() -> None:
             self.channels.ao_pump = ao_var.get().strip() or self.channels.ao_pump
+            self.channels.level_inputs = di_var.get().strip() or self.channels.level_inputs
+            self.channels.valve_outputs = do_var.get().strip() or self.channels.valve_outputs
             self.daq.channels = self.channels
             self.mp5y_config.port = port_var.get().strip() or "COM3"
             try:
@@ -618,7 +707,7 @@ class FlowControlApp(tk.Tk):
             dialog.destroy()
 
         ttk.Button(frame, text="적용", style="Start.TButton", command=apply).grid(
-            row=7, column=0, columnspan=2, sticky="ew", pady=(18, 0)
+            row=9, column=0, columnspan=2, sticky="ew", pady=(18, 0)
         )
 
     # -------------------------------------------------------------- actions
@@ -709,27 +798,61 @@ class FlowControlApp(tk.Tk):
             style="Stop.TButton" if self.feedback_running else "Start.TButton",
         )
 
+    def toggle_level_control(self) -> None:
+        if not self.level_running:
+            self.daq.check_connection()
+            if not self.daq.level_available:
+                messagebox.showerror(
+                    "레벨 I/O 오류",
+                    "NI 9422(cDAQ2Mod2)와 NI 9477(cDAQ2Mod3) 연결을 확인하세요.",
+                )
+                return
+            try:
+                # Initial state is fail-safe closed. With both contacts OFF,
+                # subsequent scans hold this state as requested.
+                self.valve_commands = self.daq.write_valves([False, False, False])
+            except DaqError as exc:
+                self._show_hardware_error(exc)
+                return
+            self.level_running = True
+            self.level_master_status.configure(text="자동 제어 동작 중")
+        else:
+            self.level_running = False
+            try:
+                self.valve_commands = self.daq.write_valves([False, False, False])
+            except DaqError as exc:
+                self._show_hardware_error(exc)
+            self._render_level_states([False] * 6, ["정지 · 안전 닫힘"] * 3)
+            self.level_master_status.configure(text="정지 · 모든 밸브 닫힘 명령")
+
+        self.level_button.configure(
+            text="자동 제어 중지" if self.level_running else "자동 제어 시작",
+            style="Stop.TButton" if self.level_running else "Start.TButton",
+        )
+
     # --------------------------------------------------------------- loops
     def refresh_connection(self) -> None:
-        ao_ok = self.daq.check_connection()
+        self.daq.check_connection()
+        ao_ok = self.daq.available
+        level_ok = self.daq.level_available
         # Avoid holding the serial port locked during idle; probe then release.
         mp_ok = self.mp5y.check_connection()
         self.mp5y.close()
 
-        connected = ao_ok or mp_ok
+        connected = ao_ok or level_ok or mp_ok
         self.status_on = not self.status_on if connected else False
-        if ao_ok and mp_ok:
+        if ao_ok and level_ok and mp_ok:
             color = COLORS["ok"] if self.status_on else "#A8D8C0"
-            text = "MP5Y + NI-DAQ 연결됨"
+            text = "MP5Y + NI 9264/9422/9477 연결됨"
+        elif mp_ok and ao_ok:
+            color = COLORS["warn"]
+            text = "유량/AO OK · 레벨 I/O 확인 필요"
         elif mp_ok:
             color = COLORS["warn"]
-            text = f"MP5Y OK / AO: {self.daq.error}"
-        elif ao_ok:
-            color = COLORS["warn"]
-            text = f"AO OK / MP5Y: {self.mp5y.error}"
+            text = f"MP5Y OK / NI: {self.daq.error}"
         else:
             color = COLORS["bad"]
-            text = "시뮬레이션 (COM3/NI 미연결)"
+            text = "연결 확인 필요 (COM3 / NI)"
 
         self.status_canvas.itemconfigure(self.status_dot, fill=color)
         self.status_label.configure(text=text)
@@ -744,6 +867,8 @@ class FlowControlApp(tk.Tk):
                 self._update_monitor()
             if self.feedback_running:
                 self._update_feedback()
+            if self.level_running:
+                self._update_levels()
         except (Mp5yError, DaqError) as exc:
             self._safe_stop(exc)
         except Exception as exc:  # noqa: BLE001
@@ -758,17 +883,62 @@ class FlowControlApp(tk.Tk):
     def _safe_stop(self, error: Exception) -> None:
         self.monitor_running = False
         self.feedback_running = False
+        self.level_running = False
         stop_error = ""
         try:
             self.current_ao = self.daq.write_voltage(0.0)
         except DaqError as exc:
             stop_error = f" / 0 V 출력 실패: {exc}"
+        try:
+            self.valve_commands = self.daq.write_valves([False, False, False])
+        except DaqError as exc:
+            stop_error += f" / 밸브 닫힘 실패: {exc}"
         self.mp5y.close()
         self.monitor_button.configure(text="측정 시작", style="Start.TButton")
         self.feedback_button.configure(text="피드백 제어 시작", style="Start.TButton")
+        self.level_button.configure(text="자동 제어 시작", style="Start.TButton")
+        self.level_master_status.configure(text="안전 정지 · 모든 밸브 닫힘 명령")
+        self._render_level_states([False] * 6, ["오류 · 안전 닫힘"] * 3)
         self.output_value.configure(text=f"AO: {self.current_ao:.3f} V")
         self.status_canvas.itemconfigure(self.status_dot, fill=COLORS["bad"])
         self.status_label.configure(text=f"안전 정지: {error}{stop_error}")
+
+    def _update_levels(self) -> None:
+        values = self.daq.read_levels()
+        roles = (ValveRole.SUPPLY, ValveRole.DRAIN, ValveRole.DRAIN)
+        decisions = []
+        commands = []
+        for index, role in enumerate(roles):
+            high = values[index * 2]
+            low = values[index * 2 + 1]
+            decision = decide_valve(role, high, low, self.valve_commands[index])
+            decisions.append(decision)
+            commands.append(decision.opened)
+        self.valve_commands = self.daq.write_valves(commands)
+        self._render_level_states(values, [decision.state for decision in decisions])
+        if any(decision.fault for decision in decisions):
+            self.level_master_status.configure(text="센서 충돌 감지 · 해당 밸브 안전 닫힘")
+        else:
+            self.level_master_status.configure(text="자동 제어 동작 중")
+
+    def _render_level_states(self, values: list[bool], states: list[str]) -> None:
+        for index in range(3):
+            high = values[index * 2]
+            low = values[index * 2 + 1]
+            opened = self.valve_commands[index]
+            self.level_high_labels[index].configure(
+                text=f"● HIGH  {'ON' if high else 'OFF'}",
+                foreground=COLORS["bad"] if high else COLORS["muted"],
+            )
+            self.level_low_labels[index].configure(
+                text=f"● LOW   {'ON' if low else 'OFF'}",
+                foreground=COLORS["warn"] if low else COLORS["muted"],
+            )
+            self.valve_status_labels[index].configure(
+                text="열림 명령" if opened else "닫힘 명령",
+                foreground=COLORS["ok"] if opened else COLORS["accent_deep"],
+            )
+            self.level_logic_labels[index].configure(text=states[index])
 
     def _apply_mp5y_options(self, pulse_ml: float) -> None:
         self.mp5y_config.pulse_ml = pulse_ml
@@ -861,6 +1031,8 @@ class FlowControlApp(tk.Tk):
             "i_gain": self.i_gain.get(),
             "lpf_cutoff": self.lpf_cutoff.get(),
             "ao_pump": self.channels.ao_pump,
+            "level_inputs": self.channels.level_inputs,
+            "valve_outputs": self.channels.valve_outputs,
             "mp5y_port": self.mp5y_config.port,
             "mp5y_slave_id": self.mp5y_config.slave_id,
             "mp5y_baudrate": self.mp5y_config.baudrate,
@@ -888,6 +1060,8 @@ class FlowControlApp(tk.Tk):
         self.i_gain.set(str(data.get("i_gain", "0.005")))
         self.lpf_cutoff.set(str(data.get("lpf_cutoff", "0.8")))
         self.channels.ao_pump = str(data.get("ao_pump", self.channels.ao_pump))
+        self.channels.level_inputs = str(data.get("level_inputs", self.channels.level_inputs))
+        self.channels.valve_outputs = str(data.get("valve_outputs", self.channels.valve_outputs))
         self.daq.channels = self.channels
         self.mp5y_config.port = str(data.get("mp5y_port", "COM3"))
         self.mp5y_config.slave_id = int(data.get("mp5y_slave_id", 1))
@@ -901,6 +1075,7 @@ class FlowControlApp(tk.Tk):
         try:
             self.feedback_running = False
             self.monitor_running = False
+            self.level_running = False
             self.daq.close()
             self.mp5y.close()
         finally:
