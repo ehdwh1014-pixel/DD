@@ -11,6 +11,8 @@ VS Code / Python 데스크톱 UI로 **펄스 유량계 → MP5Y-25(유량 표시
 | 펌프 AO | NI **9264** `cDAQ2Mod1/ao0` | 0~5 V |
 | 레벨 DI | NI **9422** `cDAQ2Mod2/port0/line0:5` | HIGH/LOW × 3 |
 | 밸브 DO | NI **9477** `cDAQ2Mod3/port0/line0:2` | 싱킹 출력 × 3 |
+| 화염 DI | NI **9422** `cDAQ2Mod2/port0/line6` | IFW 15 NO 접점 |
+| 점화 SSR | NI **9477** `cDAQ2Mod3/port0/line3` | SSR 입력 수동 ON/OFF |
 
 ## MP5Y 유량 표시 설정 (확정)
 
@@ -90,10 +92,12 @@ py pump.py
 ```
 
 ## 화면
-1. 유량 모니터 — MP5Y cc/min
-2. AO 수동 출력 — 0~5 V
-3. 유량 피드백 제어 — SV / P / I / LPF
-4. 레벨/밸브 제어 — HIGH/LOW 입력과 3개 밸브 명령 상태
+흰색·네이비·청록 기반의 15인치 노트북용 단일 대시보드입니다.
+
+1. 유량 피드백 제어 — PV/SV/오차, P/I/LPF, 소형 그래프
+2. 레벨/밸브 제어 — HIGH/LOW 입력과 3개 밸브 명령 상태
+3. 화염/점화 — 화염 감지 램프와 수동 SSR 버튼
+4. `유량계 TEST`, `펌프 TEST` — 별도 팝업
 
 ```text
 AO = clamp(P × (SV − PV) + I × ∫(SV − PV) dt, 0, 5 V)
