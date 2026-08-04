@@ -481,15 +481,15 @@ class FlowControlApp(tk.Tk):
         self.focus_err = ttk.Label(focus, text="오차: 0.0 cc/min", style="ValueSmall.TLabel")
         self.focus_err.pack(anchor="w", pady=(0, 7))
 
-        ttk.Separator(focus, orient="horizontal").pack(fill="x", pady=5)
+        ttk.Separator(focus, orient="horizontal").pack(fill="x", pady=2)
         flame_row = ttk.Frame(focus, style="Panel.TFrame")
-        flame_row.pack(fill="x", pady=(3, 5))
+        flame_row.pack(fill="x", pady=(2, 3))
         self.flame_canvas = tk.Canvas(
-            flame_row, width=32, height=32, bg=COLORS["panel"], highlightthickness=0
+            flame_row, width=28, height=28, bg=COLORS["panel"], highlightthickness=0
         )
         self.flame_canvas.pack(side="left")
         self.flame_lamp = self.flame_canvas.create_oval(
-            5, 5, 27, 27, fill="#CBD5E1", outline="#94A3B8", width=2
+            4, 4, 24, 24, fill="#CBD5E1", outline="#94A3B8", width=2
         )
         self.flame_label = ttk.Label(
             flame_row, text="화염 미감지", style="ValueSmall.TLabel"
@@ -501,10 +501,7 @@ class FlowControlApp(tk.Tk):
             style="Stop.TButton",
             command=self.toggle_igniter,
         )
-        self.igniter_button.pack(fill="x", pady=(2, 3))
-        ttk.Label(
-            focus, text="IFW15 DI6  |  SSR DO3 · 수동", style="Hint.TLabel"
-        ).pack(anchor="w")
+        self.igniter_button.pack(fill="x", pady=(1, 2))
 
         graphs = ttk.Frame(page, style="App.TFrame", width=350)
         graphs.grid(row=0, column=2, sticky="ns")
