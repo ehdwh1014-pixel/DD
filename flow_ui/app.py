@@ -535,30 +535,27 @@ class FlowControlApp(tk.Tk):
         flame_row = ttk.Frame(flame, style="Panel.TFrame")
         flame_row.pack(fill="x")
         self.flame_canvas = tk.Canvas(
-            flame_row, width=68, height=68, bg=COLORS["panel"], highlightthickness=0
+            flame_row, width=52, height=52, bg=COLORS["panel"], highlightthickness=0
         )
         self.flame_canvas.pack(side="left")
         self.flame_ring = self.flame_canvas.create_oval(
-            3, 3, 65, 65, fill="#F1F5F9", outline="#CBD5E1", width=2
+            3, 3, 49, 49, fill="#F1F5F9", outline="#CBD5E1", width=2
         )
         self.flame_lamp = self.flame_canvas.create_oval(
-            14, 14, 54, 54, fill="#CBD5E1", outline="#94A3B8", width=2
+            12, 12, 40, 40, fill="#CBD5E1", outline="#94A3B8", width=2
         )
-        flame_actions = ttk.Frame(flame_row, style="Panel.TFrame")
-        flame_actions.pack(side="left", padx=(10, 0))
-        ttk.Label(flame_actions, text="IFW15 STATUS", style="Hint.TLabel").pack(anchor="w")
         self.flame_label = ttk.Label(
-            flame_actions, text="SENSOR OFFLINE", style="FlameStatus.TLabel"
+            flame_row, text="SENSOR OFFLINE", style="FlameStatus.TLabel"
         )
-        self.flame_label.pack(anchor="w", pady=(1, 7))
+        self.flame_label.pack(side="left", padx=(9, 12))
         self.igniter_button = ttk.Button(
-            flame_actions,
+            flame_row,
             text="점화기 OFF",
             style="Compact.TButton",
             command=self.toggle_igniter,
-            width=12,
+            width=10,
         )
-        self.igniter_button.pack(anchor="w")
+        self.igniter_button.pack(side="right")
         ttk.Separator(flame, orient="horizontal").pack(fill="x", pady=(14, 10))
         ttk.Label(
             flame,
