@@ -16,6 +16,7 @@ import sys
 import time
 import tkinter as tk
 from collections import deque
+from datetime import datetime
 from pathlib import Path
 from tkinter import messagebox, ttk
 
@@ -222,6 +223,13 @@ class FlowControlApp(tk.Tk):
         self.current_ao = 0.0
         self.filtered_flow = 0.0
         self._last_loop_at: float | None = None
+        # Process timing: wall clock + pump control / V1 injection elapsed.
+        self._feedback_started_at: float | None = None
+        self._feedback_elapsed_frozen: float = 0.0
+        self._inject_started_at: float | None = None
+        self._inject_started_wall: datetime | None = None
+        self._inject_elapsed_frozen: float = 0.0
+        self._inject_was_open = False
 
         self._build_style()
         self._build_layout()
@@ -232,6 +240,7 @@ class FlowControlApp(tk.Tk):
         self._status_base_color = COLORS["bad"]
         self.refresh_connection()
         self.after(400, self._blink_status_lamp)
+        self.after(250, self._tick_process_clock)
         self.after(self.POLL_MS, self.update_loop)
         self.protocol("WM_DELETE_WINDOW", self.on_close)
 
@@ -429,6 +438,12 @@ class FlowControlApp(tk.Tk):
         title_style = "TouchTitle.TLabel" if self.touch_mode else "Title.TLabel"
         title_text = "PROCESS CONTROL" if self.touch_mode else "PROCESS CONTROL DASHBOARD"
         ttk.Label(titles, text=title_text, style=title_style).pack(anchor="w")
+        self.clock_label = ttk.Label(
+            titles,
+            text=datetime.now().strftime("%Y-%m-%d  %H:%M:%S"),
+            style="Sub.TLabel",
+        )
+        self.clock_label.pack(anchor="w", pady=(1, 0))
 
         status = ttk.Frame(header, style="App.TFrame")
         status.pack(side="right")
@@ -668,6 +683,10 @@ class FlowControlApp(tk.Tk):
         self.fb_hz.pack(anchor="w", pady=(2, 0))
         self.output_value = ttk.Label(current, text="AO: 0.000 V", style="ValueSmall.TLabel")
         self.output_value.pack(anchor="w", pady=(2, 3))
+        self.control_elapsed_label = ttk.Label(
+            current, text="제어 경과  00:00:00", style="ValueSmall.TLabel"
+        )
+        self.control_elapsed_label.pack(anchor="w", pady=(0, 3))
 
         self.feedback_graph = TrendGraph(
             current,
@@ -790,6 +809,16 @@ class FlowControlApp(tk.Tk):
             heading, text="대기 · 밸브 닫힘", style="ValueSmall.TLabel"
         )
         self.level_master_status.pack(side="right")
+        inject_row = ttk.Frame(heading, style="Panel.TFrame")
+        inject_row.pack(fill="x", pady=(4, 0))
+        self.inject_start_label = ttk.Label(
+            inject_row, text="급수 시작  --:--:--", style="ValueSmall.TLabel"
+        )
+        self.inject_start_label.pack(side="left")
+        self.inject_elapsed_label = ttk.Label(
+            inject_row, text="급수 경과  00:00:00", style="ValueSmall.TLabel"
+        )
+        self.inject_elapsed_label.pack(side="right")
 
         self.level_high_labels = []
         self.level_low_labels = []
@@ -913,6 +942,10 @@ class FlowControlApp(tk.Tk):
         self.sv_entry.pack(anchor="w", pady=(4, 0))
         self.output_value = ttk.Label(focus, text="AO: 0.000 V", style="ValueSmall.TLabel")
         self.output_value.pack(anchor="w", pady=(10, 0))
+        self.control_elapsed_label = ttk.Label(
+            focus, text="제어 경과  00:00:00", style="ValueSmall.TLabel"
+        )
+        self.control_elapsed_label.pack(anchor="w", pady=(8, 0))
         self.focus_err = ttk.Label(focus, text="오차: 0.0 cc/min", style="ValueSmall.TLabel")
         self.fb_hz = ttk.Label(focus, text="MP5Y: 대기", style="Hint.TLabel")
 
@@ -999,6 +1032,17 @@ class FlowControlApp(tk.Tk):
             header, text="대기 · 밸브 닫힘", style="Hint.TLabel"
         )
         self.level_master_status.pack(side="right")
+
+        inject_row = ttk.Frame(level_section, style="Panel.TFrame")
+        inject_row.pack(fill="x", pady=(4, 0))
+        self.inject_start_label = ttk.Label(
+            inject_row, text="급수 시작  --:--:--", style="ValueSmall.TLabel"
+        )
+        self.inject_start_label.pack(side="left")
+        self.inject_elapsed_label = ttk.Label(
+            inject_row, text="급수 경과  00:00:00", style="ValueSmall.TLabel"
+        )
+        self.inject_elapsed_label.pack(side="right")
 
         cards = ttk.Frame(level_section, style="Panel.TFrame")
         cards.pack(fill="both", expand=True, pady=(6, 0))
@@ -1629,12 +1673,17 @@ class FlowControlApp(tk.Tk):
             self.pi.reset()
             self.lpf.reset()
             self._last_loop_at = time.monotonic()
+            self._feedback_started_at = time.monotonic()
+            self._feedback_elapsed_frozen = 0.0
             self.feedback_graph.clear()
             self.feedback_ao_graph.clear()
             sv = self.number_silent(self.sv, 120)
             self.feedback_graph.set_scale(0, max(200.0, sv * 1.5), "cc/min")
         else:
             self.feedback_running = False
+            if self._feedback_started_at is not None:
+                self._feedback_elapsed_frozen = time.monotonic() - self._feedback_started_at
+            self._feedback_started_at = None
             try:
                 self.current_ao = self.daq.write_voltage(0.0)
             except DaqError as exc:
@@ -1679,6 +1728,7 @@ class FlowControlApp(tk.Tk):
             self.level_running = False
             self._level_was_available = False
             self.valve_commands = [False, False, False]
+            self._track_injection_timing(False)
             self.level_master_status.configure(text="대기 · 밸브 닫힘")
             self._render_level_states([False] * 6, ["대기"] * 3)
         # Avoid holding the serial port locked during idle; probe then release.
@@ -1776,6 +1826,10 @@ class FlowControlApp(tk.Tk):
         self.feedback_running = False
         self.level_running = False
         self.igniter_on = False
+        if self._feedback_started_at is not None:
+            self._feedback_elapsed_frozen = time.monotonic() - self._feedback_started_at
+        self._feedback_started_at = None
+        self._track_injection_timing(False)
         stop_error = ""
         try:
             self.current_ao = self.daq.write_voltage(0.0)
@@ -1879,11 +1933,63 @@ class FlowControlApp(tk.Tk):
             decisions.append(decision)
             commands.append(decision.opened)
         self.valve_commands = self.daq.write_valves(commands)
+        self._track_injection_timing(self.valve_commands[0])
         self._render_level_states(values, [decision.state for decision in decisions])
         if any(decision.fault for decision in decisions):
             self.level_master_status.configure(text="센서 충돌 · 안전 닫힘")
         else:
             self.level_master_status.configure(text="자동 제어 중")
+
+    def _track_injection_timing(self, v1_open: bool) -> None:
+        """Start/freeze V1 supply (water injection) elapsed time on open/close edges."""
+        if v1_open and not self._inject_was_open:
+            self._inject_started_at = time.monotonic()
+            self._inject_started_wall = datetime.now()
+            self._inject_elapsed_frozen = 0.0
+        elif not v1_open and self._inject_was_open:
+            if self._inject_started_at is not None:
+                self._inject_elapsed_frozen = time.monotonic() - self._inject_started_at
+            self._inject_started_at = None
+        self._inject_was_open = v1_open
+
+    @staticmethod
+    def _format_elapsed(seconds: float) -> str:
+        total = max(0, int(seconds))
+        hours, rem = divmod(total, 3600)
+        minutes, secs = divmod(rem, 60)
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+    def _tick_process_clock(self) -> None:
+        """Refresh wall clock + pump/injection elapsed displays."""
+        if getattr(self, "clock_label", None) is not None:
+            self.clock_label.configure(text=datetime.now().strftime("%Y-%m-%d  %H:%M:%S"))
+
+        if getattr(self, "control_elapsed_label", None) is not None:
+            if self.feedback_running and self._feedback_started_at is not None:
+                elapsed = time.monotonic() - self._feedback_started_at
+            else:
+                elapsed = self._feedback_elapsed_frozen
+            self.control_elapsed_label.configure(
+                text=f"제어 경과  {self._format_elapsed(elapsed)}"
+            )
+
+        if getattr(self, "inject_start_label", None) is not None:
+            if self._inject_started_wall is not None:
+                start_text = self._inject_started_wall.strftime("%H:%M:%S")
+            else:
+                start_text = "--:--:--"
+            self.inject_start_label.configure(text=f"급수 시작  {start_text}")
+
+        if getattr(self, "inject_elapsed_label", None) is not None:
+            if self._inject_started_at is not None:
+                elapsed = time.monotonic() - self._inject_started_at
+            else:
+                elapsed = self._inject_elapsed_frozen
+            self.inject_elapsed_label.configure(
+                text=f"급수 경과  {self._format_elapsed(elapsed)}"
+            )
+
+        self.after(250, self._tick_process_clock)
 
     def _render_level_states(self, values: list[bool], states: list[str]) -> None:
         for index in range(3):
