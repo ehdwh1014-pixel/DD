@@ -1813,11 +1813,6 @@ class FlowControlApp(tk.Tk):
             messagebox.showerror("NI-DAQ 오류", "NI 9422/9477 연결을 확인하세요.")
             return
         requested = not self.igniter_on
-        if requested and not messagebox.askyesno(
-            "점화 확인",
-            "점화기 SSR을 ON 하시겠습니까?\n주변 안전과 연료 상태를 확인하세요.",
-        ):
-            return
         self.igniter_on = requested
         try:
             self.daq.write_igniter(self.igniter_on)
