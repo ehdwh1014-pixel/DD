@@ -93,18 +93,24 @@ class TrendGraph(tk.Canvas):
 
     def draw(self) -> None:
         self.delete("all")
-        width = max(self.winfo_width(), 120)
-        height = max(self.winfo_height(), 60)
-        left, top, right, bottom = 42, 28, width - 12, height - 18
+        width = max(self.winfo_width(), 80)
+        height = max(self.winfo_height(), 48)
+        compact = width < 260 or height < 100
+        left = 28 if compact else 42
+        top = 18 if compact else 28
+        right = width - 8
+        bottom = height - (10 if compact else 18)
+        title_font = ("Segoe UI", 9 if compact else 12, "bold")
+        tick_font = ("Segoe UI", 7 if compact else 9)
 
         self.create_rectangle(1, 1, width - 2, height - 2, outline=COLORS["border"], width=1)
         self.create_text(
             left,
-            16,
+            10 if compact else 16,
             text=self.plot_title,
             fill=COLORS["title"],
             anchor="w",
-            font=("Segoe UI", 12, "bold"),
+            font=title_font,
         )
 
         for i in range(5):
@@ -113,37 +119,37 @@ class TrendGraph(tk.Canvas):
             self.create_line(left, y, right, y, fill=COLORS["grid"])
             label = f"{value:.0f}" if abs(self.high - self.low) >= 20 else f"{value:.1f}"
             self.create_text(
-                left - 8,
+                left - 4,
                 y,
                 text=label,
                 fill=COLORS["muted"],
                 anchor="e",
-                font=("Segoe UI", 9),
+                font=tick_font,
             )
 
         self.create_line(left, top, left, bottom, fill=COLORS["border"])
         self.create_line(left, bottom, right, bottom, fill=COLORS["border"])
-        if self.unit:
+        if self.unit and not compact:
             self.create_text(
                 left,
                 bottom + 14,
                 text=self.unit,
                 fill=COLORS["muted"],
                 anchor="w",
-                font=("Segoe UI", 9),
+                font=tick_font,
             )
 
         for index, ((name, color), points) in enumerate(zip(self.lines, self.series)):
-            lx = right - 118
-            ly = 12 + index * 18
-            self.create_oval(lx, ly, lx + 10, ly + 10, fill=color, outline="")
+            lx = right - (70 if compact else 118)
+            ly = (8 if compact else 12) + index * (14 if compact else 18)
+            self.create_oval(lx, ly, lx + 8, ly + 8, fill=color, outline="")
             self.create_text(
-                lx + 16,
-                ly + 5,
+                lx + 12,
+                ly + 4,
                 text=name,
                 fill=COLORS["text"],
                 anchor="w",
-                font=("Segoe UI", 9),
+                font=tick_font,
             )
             if len(points) < 2:
                 continue
@@ -222,6 +228,7 @@ class FlowControlApp(tk.Tk):
         self.load_settings()
         self.show_page("feedback")
         self._link_ok = False
+        self._mp5y_ok = False
         self._status_base_color = COLORS["bad"]
         self.refresh_connection()
         self.after(400, self._blink_status_lamp)
@@ -857,25 +864,21 @@ class FlowControlApp(tk.Tk):
         return section
 
     def _create_desktop_feedback_page(self) -> ttk.Frame:
-        """Dense 7″ layout: left control stack + graphs + valve rows."""
+        """7″ dashboard: inputs | PV/SV | mini graphs | FD/IGN — valves in thirds."""
         page = ttk.Frame(self.content, style="App.TFrame")
+        page.columnconfigure(0, weight=1, uniform="top")
+        page.columnconfigure(1, weight=1, uniform="top")
+        page.columnconfigure(2, weight=1, uniform="top")
+        page.columnconfigure(3, weight=1, uniform="top")
+        page.rowconfigure(0, weight=0)
+        page.rowconfigure(1, weight=1)
 
-        level_section = self.panel(page)
-        level_section.configure(padding=(6, 3))
-        level_section._card.pack(side="bottom", fill="x", pady=(4, 0))  # type: ignore[attr-defined]
-
-        top = ttk.Frame(page, style="App.TFrame")
-        top.pack(fill="both", expand=True)
-
-        controls = self.panel(top)
-        controls.configure(padding=5)
-        # Content-sized width; stretch height to match graphs without clipping
-        # by keeping this column compact enough for 600px windows.
-        controls._card.pack(side="left", fill="y", padx=(0, 6))  # type: ignore[attr-defined]
-        controls.columnconfigure(1, weight=1)
-
+        # --- 1/4 펌프 입력 ---
+        controls = self.panel(page)
+        controls.configure(padding=6)
+        self.place_panel(controls, row=0, column=0, sticky="nsew", padx=(0, 4))
         ttk.Label(controls, text="펌프 제어", style="PanelTitle.TLabel").grid(
-            row=0, column=0, columnspan=2, sticky="w"
+            row=0, column=0, columnspan=2, sticky="w", pady=(0, 2)
         )
         self.fb_pulse_ml = self.field(controls, 1, "펄스정수 (ml/P)", "0.46")
         self.p_gain = self.field(controls, 3, "P Gain", "0.020")
@@ -884,66 +887,40 @@ class FlowControlApp(tk.Tk):
         self.feedback_button = ttk.Button(
             controls, text="제어 시작", style="Start.TButton", command=self.toggle_feedback
         )
-        self.feedback_button.grid(row=9, column=0, sticky="ew", pady=(4, 0))
+        self.feedback_button.grid(row=9, column=0, sticky="ew", pady=(8, 0))
         ttk.Button(controls, text="저장", command=self.save_settings).grid(
-            row=9, column=1, sticky="ew", padx=(6, 0), pady=(4, 0)
+            row=9, column=1, sticky="ew", padx=(6, 0), pady=(8, 0)
         )
 
-        ttk.Separator(controls, orient="horizontal").grid(
-            row=10, column=0, columnspan=2, sticky="ew", pady=(8, 4)
-        )
-        ttk.Label(controls, text="CURRENT FLOW", style="PanelTitle.TLabel").grid(
-            row=11, column=0, columnspan=2, sticky="w"
-        )
-        self.focus_pv = ttk.Label(controls, text="PV  0.0 cc/min", style="ValueCompact.TLabel")
-        self.focus_pv.grid(row=12, column=0, columnspan=2, sticky="w", pady=(1, 0))
+        # --- 2/4 PV / SV ---
+        focus = self.panel(page)
+        focus.configure(padding=6)
+        self.place_panel(focus, row=0, column=1, sticky="nsew", padx=(0, 4))
+        ttk.Label(focus, text="CURRENT FLOW", style="PanelTitle.TLabel").pack(anchor="w")
+        self.focus_pv = ttk.Label(focus, text="PV  0.0 cc/min", style="ValueCompact.TLabel")
+        self.focus_pv.pack(anchor="w", pady=(8, 0))
         self.pv_value = self.focus_pv
 
-        sv_row = ttk.Frame(controls, style="Panel.TFrame")
-        sv_row.grid(row=13, column=0, columnspan=2, sticky="ew", pady=(4, 0))
-        ttk.Label(sv_row, text="SV", style="Panel.TLabel").pack(side="left")
+        ttk.Label(focus, text="SV (cc/min)", style="Panel.TLabel").pack(anchor="w", pady=(10, 0))
         self.sv = tk.StringVar(value="120.0")
         self.sv_entry = ttk.Entry(
-            sv_row,
+            focus,
             textvariable=self.sv,
             style="Highlight.TEntry",
             justify="center",
-            width=6,
-        )
-        self.sv_entry.pack(side="left", padx=(4, 2))
-        ttk.Label(sv_row, text="cc/min", style="Hint.TLabel").pack(side="left")
-        self.output_value = ttk.Label(sv_row, text="AO: 0.000 V", style="ValueSmall.TLabel")
-        self.output_value.pack(side="right")
-
-        self.focus_err = ttk.Label(controls, text="오차: 0.0 cc/min", style="ValueSmall.TLabel")
-        self.fb_hz = ttk.Label(controls, text="MP5Y: 대기", style="Hint.TLabel")
-
-        flame_row = ttk.Frame(controls, style="Panel.TFrame")
-        flame_row.grid(row=14, column=0, columnspan=2, sticky="w", pady=(6, 0))
-        self.flame_canvas = tk.Canvas(
-            flame_row, width=24, height=24, bg=COLORS["panel"], highlightthickness=0
-        )
-        self.flame_canvas.pack(side="left")
-        self.flame_ring = self.flame_canvas.create_oval(
-            1, 1, 23, 23, fill="#F1F5F9", outline="#CBD5E1", width=2
-        )
-        self.flame_lamp = self.flame_canvas.create_oval(
-            5, 5, 19, 19, fill="#CBD5E1", outline="#94A3B8", width=2
-        )
-        self.flame_label = ttk.Label(flame_row, text="FD", style="FlameStatus.TLabel")
-        self.flame_label.pack(side="left", padx=(3, 6))
-        self.igniter_button = ttk.Button(
-            flame_row,
-            text="IGN OFF",
-            style="Compact.TButton",
-            command=self.toggle_igniter,
             width=8,
         )
-        self.igniter_button.pack(side="left")
-        self.igniter_caption = self.igniter_button
+        self.sv_entry.pack(anchor="w", pady=(4, 0))
+        self.output_value = ttk.Label(focus, text="AO: 0.000 V", style="ValueSmall.TLabel")
+        self.output_value.pack(anchor="w", pady=(10, 0))
+        self.focus_err = ttk.Label(focus, text="오차: 0.0 cc/min", style="ValueSmall.TLabel")
+        self.fb_hz = ttk.Label(focus, text="MP5Y: 대기", style="Hint.TLabel")
 
-        graphs = ttk.Frame(top, style="App.TFrame")
-        graphs.pack(side="left", fill="both", expand=True)
+        # --- 3/4 미니 그래프 (보기 전용, 작게) ---
+        graphs = self.panel(page)
+        graphs.configure(padding=4)
+        self.place_panel(graphs, row=0, column=2, sticky="nsew", padx=(0, 4))
+        ttk.Label(graphs, text="추이", style="PanelTitle.TLabel").pack(anchor="w")
         self.feedback_graph = TrendGraph(
             graphs,
             "PV / SV",
@@ -952,15 +929,69 @@ class FlowControlApp(tk.Tk):
             200,
             "cc/min",
         )
-        self.feedback_graph.configure(height=110)
-        self.feedback_graph.pack(fill="both", expand=True, pady=(0, 4))
+        self.feedback_graph.configure(width=200, height=100)
+        self.feedback_graph.pack(fill="x", pady=(6, 6))
         self.feedback_ao_graph = TrendGraph(
             graphs, "AO (V)", [("AO", COLORS["ao"])], 0, 5, "V"
         )
-        self.feedback_ao_graph.configure(height=110)
-        self.feedback_ao_graph.pack(fill="both", expand=True)
+        self.feedback_ao_graph.configure(width=200, height=80)
+        self.feedback_ao_graph.pack(fill="x")
 
-        # Dense valve rows — full width used, no sparse columns
+        # --- 4/4 펄스미터 통신 + FD / IGN ---
+        safety = self.panel(page)
+        safety.configure(padding=6)
+        self.place_panel(safety, row=0, column=3, sticky="nsew")
+        ttk.Label(safety, text="통신 / 화염", style="PanelTitle.TLabel").pack(anchor="w")
+
+        pulse_row = ttk.Frame(safety, style="Panel.TFrame")
+        pulse_row.pack(anchor="w", pady=(10, 0))
+        self.mp5y_canvas = tk.Canvas(
+            pulse_row, width=28, height=28, bg=COLORS["panel"], highlightthickness=0
+        )
+        self.mp5y_canvas.pack(side="left")
+        self.mp5y_lamp = self.mp5y_canvas.create_oval(
+            3, 3, 25, 25, fill=COLORS["bad"], outline="#9B2C2C", width=2
+        )
+        mp5y_text = ttk.Frame(pulse_row, style="Panel.TFrame")
+        mp5y_text.pack(side="left", padx=(8, 0))
+        ttk.Label(mp5y_text, text="펄스미터", style="Panel.TLabel").pack(anchor="w")
+        self.mp5y_status_label = ttk.Label(mp5y_text, text="통신 OFF", style="Hint.TLabel")
+        self.mp5y_status_label.pack(anchor="w")
+
+        ttk.Separator(safety, orient="horizontal").pack(fill="x", pady=(12, 10))
+
+        flame_block = ttk.Frame(safety, style="Panel.TFrame")
+        flame_block.pack(anchor="w")
+        self.flame_canvas = tk.Canvas(
+            flame_block, width=36, height=36, bg=COLORS["panel"], highlightthickness=0
+        )
+        self.flame_canvas.pack(side="left")
+        self.flame_ring = self.flame_canvas.create_oval(
+            2, 2, 34, 34, fill="#F1F5F9", outline="#CBD5E1", width=2
+        )
+        self.flame_lamp = self.flame_canvas.create_oval(
+            8, 8, 28, 28, fill="#CBD5E1", outline="#94A3B8", width=2
+        )
+        flame_text = ttk.Frame(flame_block, style="Panel.TFrame")
+        flame_text.pack(side="left", padx=(8, 0))
+        self.flame_label = ttk.Label(flame_text, text="FD", style="FlameStatus.TLabel")
+        self.flame_label.pack(anchor="w")
+        ttk.Label(flame_text, text="화염감지기", style="Hint.TLabel").pack(anchor="w")
+
+        self.igniter_button = ttk.Button(
+            safety,
+            text="IGN OFF",
+            style="Start.TButton",
+            command=self.toggle_igniter,
+        )
+        self.igniter_button.pack(fill="x", pady=(14, 0))
+        self.igniter_caption = self.igniter_button
+        ttk.Label(safety, text="점화기", style="Hint.TLabel").pack(anchor="w", pady=(2, 0))
+
+        # --- 하단: V1 / V2 / V3 삼등분 ---
+        level_section = self.panel(page)
+        level_section.configure(padding=6)
+        self.place_panel(level_section, row=1, column=0, columnspan=4, sticky="nsew", pady=(6, 0))
         header = ttk.Frame(level_section, style="Panel.TFrame")
         header.pack(fill="x")
         ttk.Label(header, text="레벨 / 밸브", style="PanelTitle.TLabel").pack(side="left")
@@ -968,6 +999,12 @@ class FlowControlApp(tk.Tk):
             header, text="대기 · 밸브 닫힘", style="Hint.TLabel"
         )
         self.level_master_status.pack(side="right")
+
+        cards = ttk.Frame(level_section, style="Panel.TFrame")
+        cards.pack(fill="both", expand=True, pady=(6, 0))
+        for i in range(3):
+            cards.columnconfigure(i, weight=1, uniform="valve")
+            cards.rowconfigure(0, weight=1)
 
         self.level_high_labels = []
         self.level_low_labels = []
@@ -978,19 +1015,30 @@ class FlowControlApp(tk.Tk):
             ("V2 배수", "L닫힘 / H열림"),
             ("V3 배수", "L닫힘 / H열림"),
         )
-        for name, rule in definitions:
-            row = ttk.Frame(level_section, style="Panel.TFrame")
-            row.pack(anchor="w", pady=(2, 0))
-            ttk.Label(row, text=name, style="PanelTitle.TLabel", width=8).pack(side="left")
-            valve = ttk.Label(row, text="닫힘", style="ValueSmall.TLabel", width=4)
-            valve.pack(side="left", padx=(4, 10))
-            ttk.Label(row, text=rule, style="Hint.TLabel").pack(side="left")
-            high = ttk.Label(row, text="● HIGH OFF", style="Hint.TLabel")
-            high.pack(side="left", padx=(12, 0))
-            low = ttk.Label(row, text="● LOW OFF", style="Hint.TLabel")
-            low.pack(side="left", padx=(8, 0))
-            logic = ttk.Label(row, text="대기", style="Hint.TLabel")
-            logic.pack(side="left", padx=(12, 0))
+        for index, (name, rule) in enumerate(definitions):
+            wrap = tk.Frame(cards, bg=COLORS["border"], padx=1, pady=1)
+            wrap.grid(
+                row=0,
+                column=index,
+                sticky="nsew",
+                padx=(0 if index == 0 else 6, 0),
+            )
+            card = ttk.Frame(wrap, style="Panel.TFrame", padding=10)
+            card.pack(fill="both", expand=True)
+            head = ttk.Frame(card, style="Panel.TFrame")
+            head.pack(fill="x")
+            ttk.Label(head, text=name, style="PanelTitle.TLabel").pack(side="left")
+            valve = ttk.Label(head, text="닫힘", style="ValueSmall.TLabel")
+            valve.pack(side="right")
+            ttk.Label(card, text=rule, style="Hint.TLabel").pack(anchor="w", pady=(6, 0))
+            sensor_row = ttk.Frame(card, style="Panel.TFrame")
+            sensor_row.pack(fill="x", pady=(10, 0))
+            high = ttk.Label(sensor_row, text="● HIGH OFF", style="Hint.TLabel")
+            high.pack(side="left")
+            low = ttk.Label(sensor_row, text="● LOW OFF", style="Hint.TLabel")
+            low.pack(side="right")
+            logic = ttk.Label(card, text="대기", style="Hint.TLabel")
+            logic.pack(anchor="w", pady=(10, 0))
             self.level_high_labels.append(high)
             self.level_low_labels.append(low)
             self.valve_status_labels.append(valve)
@@ -1636,6 +1684,8 @@ class FlowControlApp(tk.Tk):
         # Avoid holding the serial port locked during idle; probe then release.
         mp_ok = self.mp5y.check_connection()
         self.mp5y.close()
+        self._mp5y_ok = mp_ok
+        self._paint_mp5y_lamp()
 
         connected = ao_ok or level_ok or mp_ok
         self._link_ok = connected
@@ -1672,6 +1722,8 @@ class FlowControlApp(tk.Tk):
                 color = self._status_base_color
                 outline = "#9B2C2C"
             self._paint_status_lamp(color, outline=outline)
+        if getattr(self, "mp5y_canvas", None) is not None:
+            self._paint_mp5y_lamp(blink=self.status_on if self._mp5y_ok else False)
         self.after(400, self._blink_status_lamp)
 
     def _paint_status_lamp(self, color: str, outline: str = "") -> None:
@@ -1681,6 +1733,21 @@ class FlowControlApp(tk.Tk):
             outline=outline or color,
         )
 
+    def _paint_mp5y_lamp(self, blink: bool = True) -> None:
+        """Update dedicated pulse-meter (MP5Y) communication lamp."""
+        if getattr(self, "mp5y_canvas", None) is None:
+            return
+        if self._mp5y_ok:
+            color = COLORS["ok"] if blink else "#A8D8C0"
+            outline = "#1F7A4D" if blink else "#7FB89A"
+            text = "통신 ON"
+        else:
+            color = COLORS["bad"]
+            outline = "#9B2C2C"
+            text = "통신 OFF"
+        self.mp5y_canvas.itemconfigure(self.mp5y_lamp, fill=color, outline=outline)
+        if getattr(self, "mp5y_status_label", None) is not None:
+            self.mp5y_status_label.configure(text=text)
     def update_loop(self) -> None:
         try:
             if self.monitor_running:
@@ -1698,7 +1765,9 @@ class FlowControlApp(tk.Tk):
 
     def _show_hardware_error(self, error: Exception) -> None:
         self._link_ok = False
+        self._mp5y_ok = False
         self._paint_status_lamp(COLORS["bad"], outline="#9B2C2C")
+        self._paint_mp5y_lamp(blink=False)
         self.status_label.configure(text=str(error))
         messagebox.showerror("하드웨어 오류", str(error))
 
@@ -1732,7 +1801,9 @@ class FlowControlApp(tk.Tk):
         self._render_level_states([False] * 6, ["오류 · 안전 닫힘"] * 3)
         self.output_value.configure(text=f"AO: {self.current_ao:.3f} V")
         self._link_ok = False
+        self._mp5y_ok = False
         self._paint_status_lamp(COLORS["bad"], outline="#9B2C2C")
+        self._paint_mp5y_lamp(blink=False)
         self.status_label.configure(text=f"안전 정지: {error}{stop_error}")
 
     def toggle_igniter(self) -> None:
