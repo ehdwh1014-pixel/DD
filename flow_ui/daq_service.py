@@ -66,21 +66,31 @@ class DaqService:
 
             self._nidaqmx = nidaqmx
         except ImportError:
-            self.error = "nidaqmx 패키지가 없습니다 (AO 시뮬레이션)."
+            self.error = "nidaqmx 패키지 없음 (시뮬레이션). EXE 재빌드 또는 NI-DAQmx 확인."
 
     def check_connection(self) -> bool:
         if self._nidaqmx is None:
             self.available = False
+            self.level_available = False
             return False
         try:
             devices = {
                 device.name: device
                 for device in self._nidaqmx.system.System.local().devices
             }
+            found = sorted(devices)
             self.available = AO_MODULE in devices
             self.level_available = DI_MODULE in devices and DO_MODULE in devices
             missing = [name for name in self.REQUIRED_DEVICES if name not in devices]
-            self.error = "연결됨" if not missing else f"장치 없음: {', '.join(missing)}"
+            if not missing:
+                self.error = "연결됨"
+            elif found:
+                self.error = (
+                    f"장치명 불일치 · 필요 {', '.join(missing)} / "
+                    f"PC감지 {', '.join(found)}"
+                )
+            else:
+                self.error = "NI 장치 없음 · NI-DAQmx/케이블 확인"
             states = [
                 f"9264 {'OK' if self.available else '없음'}",
                 f"9422 {'OK' if DI_MODULE in devices else '없음'}",

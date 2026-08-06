@@ -1714,13 +1714,16 @@ class FlowControlApp(tk.Tk):
             text = "MP5Y + NI 연결됨"
         elif mp_ok and ao_ok:
             self._status_base_color = COLORS["warn"]
-            text = "유량/AO OK · 레벨 I/O 확인"
+            text = f"유량/AO OK · {self.daq.error}"
+        elif ao_ok or level_ok:
+            self._status_base_color = COLORS["warn"]
+            text = f"NI 부분연결 · {self.daq.error}"
         elif mp_ok:
             self._status_base_color = COLORS["warn"]
             text = f"MP5Y OK / NI: {self.daq.error}"
         else:
             self._status_base_color = COLORS["bad"]
-            text = "연결 확인 필요 (COM3 / NI)"
+            text = self.daq.error if self.daq.error else "연결 확인 필요 (COM / NI)"
 
         if not connected:
             self.status_on = False
