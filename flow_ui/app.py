@@ -1496,7 +1496,7 @@ class FlowControlApp(tk.Tk):
         dialog = tk.Toplevel(self)
         dialog.title("채널 / 통신 설정")
         dialog.configure(bg=COLORS["bg"])
-        dialog.geometry("620x550" if self.touch_mode else "590x570")
+        dialog.geometry("620x580" if self.touch_mode else "590x600")
         dialog.transient(self)
         dialog.grab_set()
 
@@ -1513,22 +1513,24 @@ class FlowControlApp(tk.Tk):
         do_var = tk.StringVar(value=self.channels.valve_outputs)
         flame_di_var = tk.StringVar(value=self.channels.flame_input)
         igniter_do_var = tk.StringVar(value=self.channels.igniter_output)
+        inverter_do_var = tk.StringVar(value=self.channels.inverter_run)
         port_var = tk.StringVar(value=self.mp5y_config.port)
         slave_var = tk.StringVar(value=str(self.mp5y_config.slave_id))
         baud_var = tk.StringVar(value=str(self.mp5y_config.baudrate))
         mode_var = tk.StringVar(value=self.mp5y_config.value_mode)
         fmt_var = tk.StringVar(value=self.mp5y_config.pv_format)
         for row, label, var in (
-            (1, "AO 펌프 채널", ao_var),
+            (1, "AO 펌프/인버터 V1", ao_var),
             (2, "레벨 입력 DI0:5", di_var),
             (3, "밸브 출력 DO0:2", do_var),
             (4, "화염 감지 DI6", flame_di_var),
             (5, "점화기 SSR DO3", igniter_do_var),
-            (6, "MP5Y COM 포트", port_var),
-            (7, "MP5Y 주소", slave_var),
-            (8, "MP5Y Baud", baud_var),
-            (9, "표시모드 (frequency_hz/flow_ccpm)", mode_var),
-            (10, "PV포맷 (int16/int32/dec32)", fmt_var),
+            (6, "인버터 RUN DO4", inverter_do_var),
+            (7, "MP5Y COM 포트", port_var),
+            (8, "MP5Y 주소", slave_var),
+            (9, "MP5Y Baud", baud_var),
+            (10, "표시모드 (frequency_hz/flow_ccpm)", mode_var),
+            (11, "PV포맷 (int16/int32/dec32)", fmt_var),
         ):
             ttk.Label(frame, text=label, style="Panel.TLabel").grid(
                 row=row, column=0, sticky="w", pady=3 if self.touch_mode else 8
@@ -1541,6 +1543,7 @@ class FlowControlApp(tk.Tk):
             self.channels.valve_outputs = do_var.get().strip() or self.channels.valve_outputs
             self.channels.flame_input = flame_di_var.get().strip() or self.channels.flame_input
             self.channels.igniter_output = igniter_do_var.get().strip() or self.channels.igniter_output
+            self.channels.inverter_run = inverter_do_var.get().strip() or self.channels.inverter_run
             self.daq.channels = self.channels
             self.mp5y_config.port = port_var.get().strip() or "COM3"
             try:
@@ -1653,10 +1656,17 @@ class FlowControlApp(tk.Tk):
             self.feedback_ao_graph.clear()
             sv = self.number_silent(self.sv, 120)
             self.feedback_graph.set_scale(0, max(200.0, sv * 1.5), "cc/min")
+            try:
+                self.daq.write_inverter_run(True)
+            except DaqError as exc:
+                self.feedback_running = False
+                self._safe_stop(exc)
+                return
         else:
             self.feedback_running = False
             try:
                 self.current_ao = self.daq.write_voltage(0.0)
+                self.daq.write_inverter_run(False)
             except DaqError as exc:
                 self._safe_stop(exc)
                 return
@@ -1812,6 +1822,10 @@ class FlowControlApp(tk.Tk):
             self.daq.write_igniter(False)
         except DaqError as exc:
             stop_error += f" / 점화기 SSR OFF 실패: {exc}"
+        try:
+            self.daq.write_inverter_run(False)
+        except DaqError as exc:
+            stop_error += f" / 인버터 RUN OFF 실패: {exc}"
         self.mp5y.close()
         self.monitor_button.configure(text="측정 시작", style="Start.TButton")
         self.feedback_button.configure(
@@ -2042,6 +2056,7 @@ class FlowControlApp(tk.Tk):
             "valve_outputs": self.channels.valve_outputs,
             "flame_input": self.channels.flame_input,
             "igniter_output": self.channels.igniter_output,
+            "inverter_run": self.channels.inverter_run,
             "mp5y_port": self.mp5y_config.port,
             "mp5y_slave_id": self.mp5y_config.slave_id,
             "mp5y_baudrate": self.mp5y_config.baudrate,
@@ -2073,6 +2088,7 @@ class FlowControlApp(tk.Tk):
         self.channels.valve_outputs = str(data.get("valve_outputs", self.channels.valve_outputs))
         self.channels.flame_input = str(data.get("flame_input", self.channels.flame_input))
         self.channels.igniter_output = str(data.get("igniter_output", self.channels.igniter_output))
+        self.channels.inverter_run = str(data.get("inverter_run", self.channels.inverter_run))
         self.daq.channels = self.channels
         self.mp5y_config.port = str(data.get("mp5y_port", "COM3"))
         self.mp5y_config.slave_id = int(data.get("mp5y_slave_id", 1))

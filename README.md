@@ -8,11 +8,12 @@ VS Code / Python 데스크톱 UI로 **펄스 유량계 → MP5Y-25(유량 표시
 |------|------|------|
 | 유량 표시 | Autonics **MP5Y-25** | 펄스 입력 + 프리스케일 **27.6** |
 | PC 통신 | USB-RS485 | **COM3**, 9600 8N2, Addr 1 |
-| 펌프 AO | NI **9264** `cDAQ2Mod1/ao0` | 0~5 V |
+| 펌프 AO | NI **9264** `cDAQ2Mod1/ao0` | 0~5 V → iG5A V1 |
 | 레벨 DI | NI **9422** `cDAQ2Mod2/port0/line0:5` | HIGH/LOW × 3 |
 | 밸브 DO | NI **9477** `cDAQ2Mod3/port0/line0:2` | 싱킹 출력 × 3 |
 | 화염 DI | NI **9422** `cDAQ2Mod2/port0/line6` | IFW 15 NO 접점 |
 | 점화 SSR | NI **9477** `cDAQ2Mod3/port0/line3` | SSR 입력 수동 ON/OFF |
+| 인버터 RUN | NI **9477** `cDAQ2Mod3/port0/line4` | iG5A P1(FX)–CM |
 
 ## MP5Y 유량 표시 설정 (확정)
 
@@ -38,11 +39,22 @@ UI는 MP5Y 화면값(cc/min)을 **그대로 PV로 사용**합니다.
 | A(+) | A |
 | B(−) | B |
 
-### 3) 펌프 → NI 9264
-| 펌프 | NI |
-|------|-----|
-| + | `cDAQ2Mod1/ao0` |
-| GND | AO GND |
+### 3) NI 9264 AO + NI 9477 DO4 → LS iG5A (주파수 + FX)
+
+제어 시작 시 DO4=ON(FX), AO=0~5 V(주파수). 제어 중지/안전정지 시 AO=0 V 후 DO4=OFF.
+
+**측정 기준 NI 9923 스크류:** DO0..4 = #1..#5, COM = #9 (10/27/28 공용)
+
+| 신호 | NI 쪽 | iG5A 단자 |
+|------|--------|-----------|
+| 주파수 0~5 V | 9264 **ao0** | **V1** |
+| AO 공통 | 9264 **AO COM** | **CM** |
+| RUN (P) | 9477 **DO4** (스크류 **#5**) | **P1 (FX)** |
+| DO 공통 | 9477 **COM** (스크류 **#9**) | **CM** (AO COM과 공통) |
+
+- iG5A는 **NPN** 입력 모드 (P1–CM 단락 = 운전)
+- `Frq=3`(V1), `I7=0V`/`I8=0Hz`, `I9=5V`/`I10=60Hz`, `drv=1`(단자 FX)
+- 단상 입력 모델(`…-1`)만 사용
 
 ### 4) 레벨센서 3개 → NI 9422
 
