@@ -2,12 +2,13 @@
 
 Hardware (NI MAX):
   Chassis : cDAQ-9178 -> cDAQ2
-  Slot 1  : NI 9264   -> cDAQ2Mod1  (AO pump / inverter V1, ao0, 0~5 V)
+  Slot 1  : NI 9264   -> cDAQ2Mod1  (REF.W ao0 + NG PUMP ao1, 0~5 V)
   Slot 2  : NI 9422   -> cDAQ2Mod2  (three HIGH/LOW level inputs, DI0..DI5)
   Slot 3  : NI 9477   -> cDAQ2Mod3  (valves DO0..2, igniter DO3, inverter FX DO4)
 
 LS iG5A wiring (NPN / sink):
-  9264 ao0  -> V1,  9264 AO COM -> CM
+  9264 ao0 (REF.W) -> V1,  9264 AO COM -> CM
+  9264 ao1 (NG PUMP) -> NG pump command 0~5 V
   9477 DO4  -> P1(FX), 9477 COM -> CM
   Measured NI 9923 screws: DO0..4 = #1..#5, COM = #9 (also 10/27/28)
 
