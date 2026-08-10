@@ -218,13 +218,17 @@ class FlowControlApp(tk.Tk):
         self._ao_popup: tk.Toplevel | None = None
         self._keypad_popup: tk.Toplevel | None = None
         self.valve_commands = [False, False, False]
+        self.io_test_active = False
         self.igniter_on = False
         self.status_on = False
         self.current_ao = 0.0
+        self.current_ng_ao = 0.0
         self.filtered_flow = 0.0
         self._last_loop_at: float | None = None
         # Wall-clock time when pump feedback control was started.
         self._feedback_started_wall: datetime | None = None
+        self._feedback_timer_started_at: float | None = None
+        self._feedback_elapsed_s = 0.0
 
         self._build_style()
         self._build_layout()
@@ -451,7 +455,7 @@ class FlowControlApp(tk.Tk):
             ).pack(side="right", padx=(0, 6))
             ttk.Button(
                 status,
-                text="펌프 TEST",
+                text="I/O TEST",
                 style="Nav.TButton",
                 command=self.open_ao_popup,
             ).pack(side="right", padx=(0, 12))
@@ -633,7 +637,7 @@ class FlowControlApp(tk.Tk):
 
         actions = (
             ("유량 TEST", self.open_monitor_popup),
-            ("펌프 TEST", self.open_ao_popup),
+            ("I/O TEST", self.open_ao_popup),
             ("설정", self.open_settings),
         )
         for offset, (text, command) in enumerate(actions, start=3):
@@ -682,6 +686,10 @@ class FlowControlApp(tk.Tk):
             current, text="제어 시작  --:--:--", style="ValueSmall.TLabel"
         )
         self.control_start_label.pack(anchor="w", pady=(0, 3))
+        self.injection_time_label = ttk.Label(
+            current, text="물 주입시간  00:00:00", style="ValueSmall.TLabel"
+        )
+        self.injection_time_label.pack(anchor="w", pady=(0, 3))
 
         self.feedback_graph = TrendGraph(
             current,
@@ -931,6 +939,10 @@ class FlowControlApp(tk.Tk):
             focus, text="제어 시작  --:--:--", style="ValueSmall.TLabel"
         )
         self.control_start_label.pack(anchor="w", pady=(8, 0))
+        self.injection_time_label = ttk.Label(
+            focus, text="물 주입시간  00:00:00", style="ValueSmall.TLabel"
+        )
+        self.injection_time_label.pack(anchor="w", pady=(4, 0))
         self.focus_err = ttk.Label(focus, text="오차: 0.0 cc/min", style="ValueSmall.TLabel")
         self.fb_hz = ttk.Label(focus, text="MP5Y: 대기", style="Hint.TLabel")
 
@@ -1319,88 +1331,148 @@ class FlowControlApp(tk.Tk):
             self._monitor_popup = None
 
     def open_ao_popup(self) -> None:
-        """Open NI 9264 AO manual test window."""
+        """Open manual AO0/AO1 and valve DO0..DO2 test window."""
         if self._ao_popup is not None and self._ao_popup.winfo_exists():
             self._ao_popup.lift()
             self._ao_popup.focus_force()
             return
+        if self.feedback_running:
+            self.toggle_feedback()
 
         popup = tk.Toplevel(self)
         self._ao_popup = popup
-        popup.title("펌프 수동 전압 TEST (NI 9264 AO)")
+        popup.title("I/O 수동 TEST (AO0/AO1 + 밸브 DO0~2)")
         popup.configure(bg=COLORS["bg"])
+        self.io_test_active = True
+        try:
+            self.valve_commands = self.daq.write_valves([False, False, False])
+        except DaqError as exc:
+            self.io_test_active = False
+            popup.destroy()
+            self._ao_popup = None
+            self._show_hardware_error(exc)
+            return
 
         screen_w = max(self.winfo_screenwidth(), 800)
         screen_h = max(self.winfo_screenheight(), 480)
-        w = min(900, max(760, int(screen_w * 0.75)))
+        w = min(1000, max(820, int(screen_w * 0.82)))
         h = min(540, max(460, int(screen_h * 0.70)))
         popup.geometry(f"{w}x{h}")
 
         frame = ttk.Frame(popup, style="App.TFrame", padding=16)
         frame.pack(fill="both", expand=True)
 
-        ttk.Label(frame, text="펌프 수동 전압 TEST", style="PanelTitle.TLabel").pack(
+        ttk.Label(frame, text="I/O 수동 TEST", style="PanelTitle.TLabel").pack(
             anchor="w", pady=(0, 10)
         )
+        ttk.Label(
+            frame,
+            text="TEST 중 레벨 자동제어는 일시 정지됩니다. 창을 닫으면 AO0/AO1=0 V, DO0~2=OFF 후 자동제어로 복귀합니다.",
+            style="Hint.TLabel",
+        ).pack(anchor="w", pady=(0, 10))
 
         body = ttk.Frame(frame, style="App.TFrame")
         body.pack(fill="both", expand=True)
-        body.columnconfigure(1, weight=1)
+        body.columnconfigure((0, 1, 2), weight=1, uniform="test")
         body.rowconfigure(0, weight=1)
 
-        controls = self.panel(body)
-        self.place_panel(controls, row=0, column=0, sticky="nsw", padx=(0, 12))
-        ttk.Label(controls, text="수동 AO 설정", style="PanelTitle.TLabel").grid(
-            row=0, column=0, columnspan=2, sticky="w", pady=(0, 12)
-        )
-        ttk.Label(controls, text="출력 전압 (V)", style="Panel.TLabel").grid(
-            row=1, column=0, columnspan=2, sticky="w"
-        )
         self.ao_voltage = tk.StringVar(value="0.0")
-        ao_entry = ttk.Entry(
-            controls,
-            textvariable=self.ao_voltage,
-            style="Highlight.TEntry",
-            justify="center",
-            width=15,
-        )
-        ao_entry.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(6, 3))
-        if self.touch_mode:
-            ao_entry.bind(
-                "<Button-1>",
-                lambda _event: (
-                    self.open_numeric_keypad(
-                        self.ao_voltage, "펌프 수동 출력 전압 (V)", 0.0, 5.0, 3
-                    ),
-                    "break",
-                )[1],
+        self.ng_ao_voltage = tk.StringVar(value="0.0")
+        self.test_ao_value_labels = []
+        for column, (title, channel_text, variable) in enumerate(
+            (
+                ("물펌프 AO0", self.channels.ao_pump, self.ao_voltage),
+                ("NG펌프 AO1", self.channels.ao_ng_pump, self.ng_ao_voltage),
             )
-        ttk.Label(controls, text="허용 범위 0.000 ~ 5.000 V", style="Hint.TLabel").grid(
-            row=3, column=0, columnspan=2, sticky="w"
-        )
-        ttk.Button(
-            controls, text="전압 출력", style="Start.TButton", command=self.output_ao
-        ).grid(row=4, column=0, columnspan=2, sticky="ew", pady=(16, 0))
-        ttk.Button(
-            controls, text="0 V (정지)", style="Stop.TButton", command=self.zero_ao
-        ).grid(row=5, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ):
+            controls = self.panel(body)
+            self.place_panel(
+                controls, row=0, column=column, sticky="nsew", padx=(0, 8)
+            )
+            ttk.Label(controls, text=title, style="PanelTitle.TLabel").pack(anchor="w")
+            ttk.Label(controls, text=channel_text, style="Hint.TLabel").pack(
+                anchor="w", pady=(2, 14)
+            )
+            entry = ttk.Entry(
+                controls, textvariable=variable, style="Highlight.TEntry", justify="center"
+            )
+            entry.pack(fill="x")
+            if self.touch_mode:
+                entry.bind(
+                    "<Button-1>",
+                    lambda _event, var=variable, name=title: (
+                        self.open_numeric_keypad(var, f"{name} 출력 (V)", 0.0, 5.0, 3),
+                        "break",
+                    )[1],
+                )
+            ttk.Label(controls, text="0.000 ~ 5.000 V", style="Hint.TLabel").pack(
+                anchor="w", pady=(3, 12)
+            )
+            ttk.Button(
+                controls,
+                text="전압 출력",
+                style="Start.TButton",
+                command=lambda index=column: self.output_test_ao(index),
+            ).pack(fill="x")
+            ttk.Button(
+                controls,
+                text="0 V (정지)",
+                style="Stop.TButton",
+                command=lambda index=column: self.zero_test_ao(index),
+            ).pack(fill="x", pady=(8, 0))
+            value_label = ttk.Label(
+                controls, text="현재 출력: 0.000 V", style="ValueSmall.TLabel"
+            )
+            value_label.pack(anchor="w", pady=(16, 0))
+            self.test_ao_value_labels.append(value_label)
 
-        self.ao_value = ttk.Label(controls, text="현재 출력: 0.000 V", style="Value.TLabel")
-        self.ao_value.grid(row=6, column=0, columnspan=2, sticky="w", pady=(18, 0))
-
-        self.ao_graph = TrendGraph(body, "AO 출력 추이", [("AO", COLORS["ao"])], 0, 5, "V")
-        self.ao_graph.grid(row=0, column=1, sticky="nsew")
+        valves = self.panel(body)
+        self.place_panel(valves, row=0, column=2, sticky="nsew")
+        ttk.Label(valves, text="전동볼밸브 DO", style="PanelTitle.TLabel").pack(anchor="w")
+        ttk.Label(
+            valves, text="레벨센서 무시 · DO 직접 시험", style="Hint.TLabel"
+        ).pack(anchor="w", pady=(2, 10))
+        self.test_valve_labels = []
+        for index in range(3):
+            row = ttk.Frame(valves, style="Panel.TFrame")
+            row.pack(fill="x", pady=5)
+            ttk.Label(row, text=f"V{index + 1} / DO{index}", style="Panel.TLabel").pack(
+                side="left"
+            )
+            status = ttk.Label(row, text="닫힘", style="Hint.TLabel")
+            status.pack(side="right")
+            buttons = ttk.Frame(valves, style="Panel.TFrame")
+            buttons.pack(fill="x", pady=(0, 5))
+            buttons.columnconfigure((0, 1), weight=1)
+            ttk.Button(
+                buttons,
+                text="열기",
+                style="Start.TButton",
+                command=lambda valve=index: self.set_test_valve(valve, True),
+            ).grid(row=0, column=0, sticky="ew", padx=(0, 3))
+            ttk.Button(
+                buttons,
+                text="닫기",
+                style="Stop.TButton",
+                command=lambda valve=index: self.set_test_valve(valve, False),
+            ).grid(row=0, column=1, sticky="ew", padx=(3, 0))
+            self.test_valve_labels.append(status)
 
         popup.protocol("WM_DELETE_WINDOW", self._close_ao_popup)
 
     def _close_ao_popup(self) -> None:
         try:
-            # Always stop pump command when closing the manual window.
+            # Always clear every manual test output before returning to AUTO.
             try:
                 self.daq.write_voltage(0.0)
+                self.daq.write_voltage(0.0, self.channels.ao_ng_pump)
+                self.valve_commands = self.daq.write_valves([False, False, False])
             except DaqError:
                 pass
         finally:
+            self.current_ao = 0.0
+            self.current_ng_ao = 0.0
+            self.io_test_active = False
             if self._ao_popup is not None and self._ao_popup.winfo_exists():
                 self._ao_popup.destroy()
             self._ao_popup = None
@@ -1496,7 +1568,7 @@ class FlowControlApp(tk.Tk):
         dialog = tk.Toplevel(self)
         dialog.title("채널 / 통신 설정")
         dialog.configure(bg=COLORS["bg"])
-        dialog.geometry("620x580" if self.touch_mode else "590x600")
+        dialog.geometry("620x620" if self.touch_mode else "590x650")
         dialog.transient(self)
         dialog.grab_set()
 
@@ -1509,6 +1581,7 @@ class FlowControlApp(tk.Tk):
         )
 
         ao_var = tk.StringVar(value=self.channels.ao_pump)
+        ng_ao_var = tk.StringVar(value=self.channels.ao_ng_pump)
         di_var = tk.StringVar(value=self.channels.level_inputs)
         do_var = tk.StringVar(value=self.channels.valve_outputs)
         flame_di_var = tk.StringVar(value=self.channels.flame_input)
@@ -1520,17 +1593,18 @@ class FlowControlApp(tk.Tk):
         mode_var = tk.StringVar(value=self.mp5y_config.value_mode)
         fmt_var = tk.StringVar(value=self.mp5y_config.pv_format)
         for row, label, var in (
-            (1, "AO 펌프/인버터 V1", ao_var),
-            (2, "레벨 입력 DI0:5", di_var),
-            (3, "밸브 출력 DO0:2", do_var),
-            (4, "화염 감지 DI6", flame_di_var),
-            (5, "점화기 SSR DO3", igniter_do_var),
-            (6, "인버터 RUN DO4", inverter_do_var),
-            (7, "MP5Y COM 포트", port_var),
-            (8, "MP5Y 주소", slave_var),
-            (9, "MP5Y Baud", baud_var),
-            (10, "표시모드 (frequency_hz/flow_ccpm)", mode_var),
-            (11, "PV포맷 (int16/int32/dec32)", fmt_var),
+            (1, "물펌프 AO0 / 인버터 V1", ao_var),
+            (2, "NG펌프 AO1 (0~5V)", ng_ao_var),
+            (3, "레벨 입력 DI0:5", di_var),
+            (4, "밸브 출력 DO0:2", do_var),
+            (5, "화염 감지 DI6", flame_di_var),
+            (6, "점화기 SSR DO3", igniter_do_var),
+            (7, "인버터 RUN DO4", inverter_do_var),
+            (8, "MP5Y COM 포트", port_var),
+            (9, "MP5Y 주소", slave_var),
+            (10, "MP5Y Baud", baud_var),
+            (11, "표시모드 (frequency_hz/flow_ccpm)", mode_var),
+            (12, "PV포맷 (int16/int32/dec32)", fmt_var),
         ):
             ttk.Label(frame, text=label, style="Panel.TLabel").grid(
                 row=row, column=0, sticky="w", pady=3 if self.touch_mode else 8
@@ -1539,6 +1613,9 @@ class FlowControlApp(tk.Tk):
 
         def apply() -> None:
             self.channels.ao_pump = ao_var.get().strip() or self.channels.ao_pump
+            self.channels.ao_ng_pump = (
+                ng_ao_var.get().strip() or self.channels.ao_ng_pump
+            )
             self.channels.level_inputs = di_var.get().strip() or self.channels.level_inputs
             self.channels.valve_outputs = do_var.get().strip() or self.channels.valve_outputs
             self.channels.flame_input = flame_di_var.get().strip() or self.channels.flame_input
@@ -1577,7 +1654,7 @@ class FlowControlApp(tk.Tk):
             style="TouchStart.TButton" if self.touch_mode else "Start.TButton",
             command=apply,
         ).grid(
-            row=11, column=0, columnspan=2, sticky="ew", pady=(18, 0)
+            row=13, column=0, columnspan=2, sticky="ew", pady=(18, 0)
         )
 
     # -------------------------------------------------------------- actions
@@ -1623,6 +1700,46 @@ class FlowControlApp(tk.Tk):
         self.ao_value.configure(text=f"현재 출력: {self.current_ao:.3f} V")
         self.ao_graph.add(self.current_ao)
 
+    def output_test_ao(self, index: int) -> None:
+        """Apply the requested AO0 water or AO1 NG pump test voltage."""
+        variable = self.ao_voltage if index == 0 else self.ng_ao_voltage
+        voltage = self.number(variable, "출력 전압")
+        if voltage is None:
+            return
+        if not 0.0 <= voltage <= 5.0:
+            messagebox.showerror("범위 오류", "AO 출력은 0.0 ~ 5.0 V여야 합니다.")
+            return
+        channel = self.channels.ao_pump if index == 0 else self.channels.ao_ng_pump
+        try:
+            actual = self.daq.write_voltage(voltage, channel)
+        except DaqError as exc:
+            self._show_hardware_error(exc)
+            return
+        if index == 0:
+            self.current_ao = actual
+        else:
+            self.current_ng_ao = actual
+        self.test_ao_value_labels[index].configure(text=f"현재 출력: {actual:.3f} V")
+
+    def zero_test_ao(self, index: int) -> None:
+        variable = self.ao_voltage if index == 0 else self.ng_ao_voltage
+        variable.set("0.0")
+        self.output_test_ao(index)
+
+    def set_test_valve(self, index: int, opened: bool) -> None:
+        """Directly command one valve while the I/O test popup owns DO0..DO2."""
+        commands = list(self.valve_commands)
+        commands[index] = bool(opened)
+        try:
+            self.valve_commands = self.daq.write_valves(commands)
+        except DaqError as exc:
+            self._show_hardware_error(exc)
+            return
+        self.test_valve_labels[index].configure(
+            text="열림" if opened else "닫힘",
+            foreground=COLORS["ok"] if opened else COLORS["accent_deep"],
+        )
+
     def validate_feedback(self) -> bool:
         for var, label in (
             (self.fb_pulse_ml, "펄스정수"),
@@ -1651,6 +1768,8 @@ class FlowControlApp(tk.Tk):
             self.lpf.reset()
             self._last_loop_at = time.monotonic()
             self._feedback_started_wall = datetime.now()
+            self._feedback_elapsed_s = 0.0
+            self._feedback_timer_started_at = time.monotonic()
             self._refresh_control_start_label()
             self.feedback_graph.clear()
             self.feedback_ao_graph.clear()
@@ -1663,6 +1782,7 @@ class FlowControlApp(tk.Tk):
                 self._safe_stop(exc)
                 return
         else:
+            self._stop_feedback_timer()
             self.feedback_running = False
             try:
                 self.current_ao = self.daq.write_voltage(0.0)
@@ -1805,6 +1925,7 @@ class FlowControlApp(tk.Tk):
         messagebox.showerror("하드웨어 오류", str(error))
 
     def _safe_stop(self, error: Exception) -> None:
+        self._stop_feedback_timer()
         self.monitor_running = False
         self.feedback_running = False
         self.level_running = False
@@ -1814,6 +1935,12 @@ class FlowControlApp(tk.Tk):
             self.current_ao = self.daq.write_voltage(0.0)
         except DaqError as exc:
             stop_error = f" / 0 V 출력 실패: {exc}"
+        try:
+            self.current_ng_ao = self.daq.write_voltage(
+                0.0, self.channels.ao_ng_pump
+            )
+        except DaqError as exc:
+            stop_error += f" / NG AO1 0 V 실패: {exc}"
         try:
             self.valve_commands = self.daq.write_valves([False, False, False])
         except DaqError as exc:
@@ -1905,6 +2032,9 @@ class FlowControlApp(tk.Tk):
         )
 
     def _update_levels(self) -> None:
+        if self.io_test_active:
+            self.level_master_status.configure(text="I/O TEST · 레벨 자동제어 일시정지")
+            return
         values = self.daq.read_levels()
         roles = (ValveRole.SUPPLY, ValveRole.DRAIN, ValveRole.DRAIN)
         decisions = []
@@ -1931,10 +2061,30 @@ class FlowControlApp(tk.Tk):
             text = "--:--:--"
         self.control_start_label.configure(text=f"제어 시작  {text}")
 
+    def _stop_feedback_timer(self) -> None:
+        if self._feedback_timer_started_at is not None:
+            self._feedback_elapsed_s += max(
+                0.0, time.monotonic() - self._feedback_timer_started_at
+            )
+            self._feedback_timer_started_at = None
+
+    def _refresh_injection_time(self) -> None:
+        elapsed = self._feedback_elapsed_s
+        if self._feedback_timer_started_at is not None:
+            elapsed += max(0.0, time.monotonic() - self._feedback_timer_started_at)
+        total_seconds = int(elapsed)
+        hours, remainder = divmod(total_seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        if getattr(self, "injection_time_label", None) is not None:
+            self.injection_time_label.configure(
+                text=f"물 주입시간  {hours:02d}:{minutes:02d}:{seconds:02d}"
+            )
+
     def _tick_process_clock(self) -> None:
         """Refresh wall clock display."""
         if getattr(self, "clock_label", None) is not None:
             self.clock_label.configure(text=datetime.now().strftime("%Y-%m-%d  %H:%M:%S"))
+        self._refresh_injection_time()
         self.after(250, self._tick_process_clock)
 
     def _render_level_states(self, values: list[bool], states: list[str]) -> None:
@@ -2052,6 +2202,7 @@ class FlowControlApp(tk.Tk):
             "i_gain": self.i_gain.get(),
             "lpf_cutoff": self.lpf_cutoff.get(),
             "ao_pump": self.channels.ao_pump,
+            "ao_ng_pump": self.channels.ao_ng_pump,
             "level_inputs": self.channels.level_inputs,
             "valve_outputs": self.channels.valve_outputs,
             "flame_input": self.channels.flame_input,
@@ -2084,6 +2235,9 @@ class FlowControlApp(tk.Tk):
         self.i_gain.set(str(data.get("i_gain", "0.005")))
         self.lpf_cutoff.set(str(data.get("lpf_cutoff", "0.8")))
         self.channels.ao_pump = str(data.get("ao_pump", self.channels.ao_pump))
+        self.channels.ao_ng_pump = str(
+            data.get("ao_ng_pump", self.channels.ao_ng_pump)
+        )
         self.channels.level_inputs = str(data.get("level_inputs", self.channels.level_inputs))
         self.channels.valve_outputs = str(data.get("valve_outputs", self.channels.valve_outputs))
         self.channels.flame_input = str(data.get("flame_input", self.channels.flame_input))

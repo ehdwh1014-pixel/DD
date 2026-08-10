@@ -34,6 +34,7 @@ class ChannelConfig:
     """DAQmx channels used by the control application."""
 
     ao_pump: str = f"{AO_MODULE}/ao0"
+    ao_ng_pump: str = f"{AO_MODULE}/ao1"
     level_inputs: str = f"{DI_MODULE}/port0/line0:5"
     valve_outputs: str = f"{DO_MODULE}/port0/line0:2"
     # IFW15 flame detector (potential-free contacts) -> NI 9422 DI6 (line6).
@@ -56,8 +57,7 @@ class DaqService:
         self.error = "NI-DAQmx를 확인하는 중입니다."
         self.device_summary = "NI 9264 / 9422 / 9477 대기"
         self._nidaqmx = None
-        self._ao_task = None
-        self._ao_channel: str | None = None
+        self._ao_tasks: dict[str, object] = {}
         self._di_task = None
         self._do_task = None
         self._di_flame_task = None
@@ -266,26 +266,25 @@ class DaqService:
         if not (self.available and self._nidaqmx):
             return voltage
         try:
-            if self._ao_task is not None and self._ao_channel != channel:
-                self._close_ao_task()
-            if self._ao_task is None:
+            task = self._ao_tasks.get(channel)
+            if task is None:
                 task = self._nidaqmx.Task()
                 task.ao_channels.add_ao_voltage_chan(channel, min_val=0.0, max_val=5.0)
-                self._ao_task = task
-                self._ao_channel = channel
-            self._ao_task.write(voltage, auto_start=True)
+                self._ao_tasks[channel] = task
+            task.write(voltage, auto_start=True)
             self.error = "연결됨"
         except Exception as exc:  # noqa: BLE001
             self.error = f"AO 출력 오류: {exc}"
-            self._close_ao_task()
+            self._close_ao_task(channel)
             raise DaqError(self.error) from exc
         return voltage
 
-    def _close_ao_task(self) -> None:
-        task = self._ao_task
-        self._ao_task = None
-        self._ao_channel = None
-        if task is not None:
+    def _close_ao_task(self, channel: str | None = None) -> None:
+        channels = [channel] if channel is not None else list(self._ao_tasks)
+        for task_channel in channels:
+            task = self._ao_tasks.pop(task_channel, None)
+            if task is None:
+                continue
             try:
                 task.close()
             except Exception:  # noqa: BLE001
@@ -356,6 +355,10 @@ class DaqService:
             pass
         try:
             self.write_voltage(0.0)
+        except DaqError:
+            pass
+        try:
+            self.write_voltage(0.0, self.channels.ao_ng_pump)
         except DaqError:
             pass
         self._close_di_task()

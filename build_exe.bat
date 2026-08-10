@@ -21,7 +21,21 @@ py -m PyInstaller --noconfirm --clean --onefile --windowed ^
   --hidden-import serial ^
   pump.py
 
+if errorlevel 1 (
+  echo Build failed.
+  pause
+  exit /b 1
+)
+
+if exist deploy rmdir /s /q deploy
+mkdir deploy
+copy /y "dist\PulseFlow.exe" "deploy\PulseFlow.exe" >nul
+copy /y "README.md" "deploy\README.md" >nul
+powershell -NoProfile -Command "Compress-Archive -Path 'deploy\*' -DestinationPath 'PulseFlow_deploy.zip' -Force"
+
 echo.
 echo Done. Output: dist\PulseFlow.exe
+echo Deploy folder: deploy
+echo Deploy ZIP: PulseFlow_deploy.zip
 echo Note: Install NI-DAQmx Runtime on the industrial PC separately.
 pause
