@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>설비 제어 패널</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">INDUSTRIAL CONTROL</p>
+          <h1>설비 제어 패널</h1>
+        </div>
+        <div class="connection">
+          <span class="status-dot" id="connectionDot"></span>
+          <span id="connectionText">시뮬레이션 모드</span>
+        </div>
+      </header>
+
+      <section class="alert" id="alert" hidden role="alert"></section>
+
+      <section class="grid">
+        <article class="card valve-card">
+          <div class="card-heading">
+            <div>
+              <p class="eyebrow">DO · 전동 볼밸브</p>
+              <h2>레벨 제어 밸브</h2>
+            </div>
+            <span class="pill auto" id="valveMode">자동</span>
+          </div>
+          <div class="level-display">
+            <span>현재 레벨</span>
+            <strong id="levelValue">62%</strong>
+          </div>
+          <div class="level-track"><div id="levelFill"></div></div>
+          <p class="muted">자동 모드에서는 레벨 센서 조건으로 밸브를 제어합니다.</p>
+          <div class="button-row">
+            <button class="secondary" id="autoValve">자동 제어</button>
+            <button class="primary" id="manualValve">수동 제어</button>
+          </div>
+          <div class="manual-panel" id="manualValvePanel" hidden>
+            <p>수동 동작은 레벨 자동 제어를 정지합니다.</p>
+            <div class="button-row">
+              <button class="safe-action" data-valve-command="open">밸브 열기</button>
+              <button class="danger-action" data-valve-command="close">밸브 닫기</button>
+            </div>
+          </div>
+        </article>
+
+        <article class="card">
+          <div class="card-heading">
+            <div>
+              <p class="eyebrow">AO 0 · 물 펌프</p>
+              <h2>물 펌프 운전 시간</h2>
+            </div>
+            <span class="pill running" id="waterPumpState">정지</span>
+          </div>
+          <div class="hours">
+            <strong id="waterPumpHours">0.00</strong>
+            <span>h</span>
+          </div>
+          <p class="muted">브라우저에 누적 저장됩니다. 설비 이력은 PLC/서버에서도 별도로 보존하세요.</p>
+          <div class="button-row">
+            <button class="primary" id="waterPumpToggle">물 펌프 시작</button>
+            <button class="secondary" id="resetWaterHours">시간 초기화</button>
+          </div>
+        </article>
+
+        <article class="card ng-card">
+          <div class="card-heading">
+            <div>
+              <p class="eyebrow">AO 1 · NG 펌프</p>
+              <h2>NG 펌프 전압 지령</h2>
+            </div>
+            <output class="voltage-output" id="ngVoltageOutput">0.00 V</output>
+          </div>
+          <label for="ngVoltage">출력 전압 <span>0.00–5.00 V</span></label>
+          <input id="ngVoltage" type="range" min="0" max="5" step="0.05" value="0" />
+          <div class="range-labels"><span>0 V</span><span>5 V</span></div>
+          <div class="button-row">
+            <button class="primary" id="applyNgVoltage">AO1 전압 적용</button>
+            <button class="secondary" id="stopNgPump">0 V 정지</button>
+          </div>
+          <p class="muted">AO1 실제 범위와 0 V 동작은 펌프/드라이브 매뉴얼로 확인해야 합니다.</p>
+        </article>
+      </section>
+
+      <section class="card events">
+        <div class="card-heading">
+          <div>
+            <p class="eyebrow">EVENT LOG</p>
+            <h2>동작 기록</h2>
+          </div>
+          <button class="text-button" id="clearLog">기록 지우기</button>
+        </div>
+        <ol id="eventLog"></ol>
+      </section>
+    </main>
+    <dialog id="confirmDialog">
+      <form method="dialog">
+        <h2 id="dialogTitle">출력 변경 확인</h2>
+        <p id="dialogMessage"></p>
+        <div class="button-row">
+          <button value="cancel" class="secondary">취소</button>
+          <button value="confirm" class="danger-action">확인 후 실행</button>
+        </div>
+      </form>
+    </dialog>
+    <script src="app.js"></script>
+  </body>
+</html>
