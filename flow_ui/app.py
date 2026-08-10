@@ -236,6 +236,7 @@ class FlowControlApp(tk.Tk):
         self.show_page("feedback")
         self._link_ok = False
         self._mp5y_ok = False
+        self._mp5y_port_present = False
         self._status_base_color = COLORS["bad"]
         self.refresh_connection()
         self.after(400, self._blink_status_lamp)
@@ -1336,8 +1337,16 @@ class FlowControlApp(tk.Tk):
             self._ao_popup.lift()
             self._ao_popup.focus_force()
             return
+        if not (self.daq.available and self.daq.level_available):
+            messagebox.showerror(
+                "NI-DAQ 오류",
+                "I/O TEST는 NI 9264와 NI 9477이 모두 연결되어야 사용할 수 있습니다.",
+            )
+            return
         if self.feedback_running:
             self.toggle_feedback()
+        if self.monitor_running:
+            self.toggle_monitor()
 
         popup = tk.Toplevel(self)
         self._ao_popup = popup
@@ -1759,6 +1768,21 @@ class FlowControlApp(tk.Tk):
     def toggle_feedback(self) -> None:
         if not self.feedback_running and not self.validate_feedback():
             return
+        if not self.feedback_running and not (
+            self.daq.available and self.daq.level_available
+        ):
+            messagebox.showerror(
+                "NI-DAQ 오류",
+                "피드백 제어는 NI 9264(AO)와 NI 9477(DO4)이 모두 연결되어야 합니다.",
+            )
+            return
+        if not self.feedback_running and not self._mp5y_ok:
+            messagebox.showerror(
+                "MP5Y 통신 오류",
+                "유량 피드백 제어에는 MP5Y 응답이 필요합니다.\n"
+                "NI-DAQ 레벨/밸브 제어와 I/O TEST는 계속 사용할 수 있습니다.",
+            )
+            return
         if self.monitor_running:
             self.toggle_monitor()
 
@@ -1832,6 +1856,7 @@ class FlowControlApp(tk.Tk):
             self.level_master_status.configure(text="대기 · 밸브 닫힘")
             self._render_level_states([False] * 6, ["대기"] * 3)
         # Avoid holding the serial port locked during idle; probe then release.
+        self._mp5y_port_present = self.mp5y.port_present()
         mp_ok = self.mp5y.check_connection()
         self.mp5y.close()
         self._mp5y_ok = mp_ok
@@ -1841,7 +1866,16 @@ class FlowControlApp(tk.Tk):
         self._link_ok = connected
         if ao_ok and level_ok and mp_ok:
             self._status_base_color = COLORS["ok"]
-            text = "MP5Y + NI 연결됨"
+            text = f"NI DAQ + {self.mp5y_config.port}/MP5Y 연결됨"
+        elif ao_ok and level_ok:
+            self._status_base_color = COLORS["warn"]
+            if self._mp5y_port_present:
+                text = (
+                    f"NI DAQ 연결됨 · {self.mp5y_config.port} 연결 / "
+                    "MP5Y 응답 없음"
+                )
+            else:
+                text = f"NI DAQ 연결됨 · {self.mp5y_config.port} 미연결"
         elif mp_ok and ao_ok:
             self._status_base_color = COLORS["warn"]
             text = f"유량/AO OK · {self.daq.error}"
@@ -1851,6 +1885,9 @@ class FlowControlApp(tk.Tk):
         elif mp_ok:
             self._status_base_color = COLORS["warn"]
             text = f"MP5Y OK / NI: {self.daq.error}"
+        elif self._mp5y_port_present:
+            self._status_base_color = COLORS["warn"]
+            text = f"{self.mp5y_config.port} 연결 / MP5Y 응답 없음 · NI: {self.daq.error}"
         else:
             self._status_base_color = COLORS["bad"]
             text = self.daq.error if self.daq.error else "연결 확인 필요 (COM / NI)"
@@ -1894,27 +1931,78 @@ class FlowControlApp(tk.Tk):
             color = COLORS["ok"] if blink else "#A8D8C0"
             outline = "#1F7A4D" if blink else "#7FB89A"
             text = "통신 ON"
+        elif self._mp5y_port_present:
+            color = COLORS["warn"]
+            outline = "#B7791F"
+            text = f"{self.mp5y_config.port} 연결 · 응답 없음"
         else:
             color = COLORS["bad"]
             outline = "#9B2C2C"
-            text = "통신 OFF"
+            text = f"{self.mp5y_config.port} 미연결"
         self.mp5y_canvas.itemconfigure(self.mp5y_lamp, fill=color, outline=outline)
         if getattr(self, "mp5y_status_label", None) is not None:
             self.mp5y_status_label.configure(text=text)
     def update_loop(self) -> None:
+        daq_failed = False
         try:
             if self.monitor_running:
                 self._update_monitor()
             if self.feedback_running:
                 self._update_feedback()
+        except Mp5yError as exc:
+            self._stop_mp5y_control(exc)
+        except DaqError as exc:
+            daq_failed = True
+            self._safe_stop(exc)
+        except Exception as exc:  # noqa: BLE001
+            daq_failed = True
+            self._safe_stop(RuntimeError(f"제어 루프 오류: {exc}"))
+
+        try:
+            if daq_failed:
+                return
             if self.level_running:
                 self._update_levels()
             self._update_flame_status()
-        except (Mp5yError, DaqError) as exc:
+        except DaqError as exc:
             self._safe_stop(exc)
         except Exception as exc:  # noqa: BLE001
-            self._safe_stop(RuntimeError(f"루프 오류: {exc}"))
-        self.after(self.POLL_MS, self.update_loop)
+            self._safe_stop(RuntimeError(f"DAQ 루프 오류: {exc}"))
+        finally:
+            self.after(self.POLL_MS, self.update_loop)
+
+    def _stop_mp5y_control(self, error: Exception) -> None:
+        """Stop only flow-dependent control; keep independent DAQ I/O alive."""
+        self._stop_feedback_timer()
+        self.monitor_running = False
+        self.feedback_running = False
+        stop_error = ""
+        try:
+            self.current_ao = self.daq.write_voltage(0.0)
+        except DaqError as exc:
+            stop_error = f" / AO0 정지 실패: {exc}"
+        try:
+            self.daq.write_inverter_run(False)
+        except DaqError as exc:
+            stop_error += f" / 인버터 RUN OFF 실패: {exc}"
+        self.mp5y.close()
+        self._mp5y_ok = False
+        self._mp5y_port_present = self.mp5y.port_present()
+        self._paint_mp5y_lamp(blink=False)
+        self.monitor_button.configure(text="측정 시작", style="Start.TButton")
+        self.feedback_button.configure(
+            text="제어 시작",
+            style="TouchStart.TButton" if self.touch_mode else "Start.TButton",
+        )
+        self.output_value.configure(text=f"AO: {self.current_ao:.3f} V")
+        port_text = (
+            f"{self.mp5y_config.port} 연결 / MP5Y 응답 없음"
+            if self._mp5y_port_present
+            else f"{self.mp5y_config.port} 미연결"
+        )
+        self.status_label.configure(
+            text=f"{port_text} · NI DAQ 제어는 계속 사용 가능{stop_error}"
+        )
 
     def _show_hardware_error(self, error: Exception) -> None:
         self._link_ok = False

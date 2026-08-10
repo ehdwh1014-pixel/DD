@@ -103,6 +103,19 @@ class Mp5yService:
             self._close_client()
             return False
 
+    def port_present(self) -> bool:
+        """Return whether the configured serial port is enumerated by Windows."""
+        try:
+            from serial.tools import list_ports
+
+            expected = self.config.port.strip().casefold()
+            return any(
+                str(port.device).strip().casefold() == expected
+                for port in list_ports.comports()
+            )
+        except Exception:  # noqa: BLE001 - status aid only
+            return False
+
     def read_flow(self, pulse_ml: float | None = None) -> tuple[float, float, int, int]:
         """Return (flow_ccpm, frequency_hz_or_nan, raw_int, dot)."""
         if pulse_ml is not None:
