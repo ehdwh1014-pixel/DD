@@ -1,0 +1,32 @@
+PulseFlow 산업용 PC 배포 안내
+================================
+
+1) 이 ZIP을 Windows 개발 PC에 복사해 압축 해제합니다.
+2) 폴더에서 build_exe.bat 를 더블클릭합니다.
+3) 완료되면 아래 파일이 생깁니다.
+   - dist\PulseFlow.exe
+   - deploy\PulseFlow.exe
+   - PulseFlow_deploy.zip
+4) PulseFlow_deploy.zip 을 USB로 산업용 PC에 복사합니다.
+5) 산업용 PC에서 압축 해제 후 PulseFlow.exe 실행합니다.
+
+산업용 PC 필수 준비
+--------------------
+- NI-DAQmx Runtime 설치
+- NI MAX 장치명:
+  cDAQ2
+  cDAQ2Mod1 (NI 9264)  REF.W=ao0 / NG PUMP=ao1
+  cDAQ2Mod2 (NI 9422)
+  cDAQ2Mod3 (NI 9477)
+- MP5Y USB-RS485 COM 포트 확인 (기본 COM3)
+
+라벨
+----
+- AO0 = REF.W
+- AO1 = NG PUMP
+- I/O TEST = REF.W(AO0) + 밸브 DO0~2 수동시험
+- NG PUMP는 메인 화면에서 제어
+
+소스 ZIP (GitHub)
+-----------------
+https://github.com/ehdwh1014-pixel/DD/archive/refs/heads/cursor/pulse-flow-feedback-ui.zip

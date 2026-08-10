@@ -31,11 +31,13 @@ if exist deploy rmdir /s /q deploy
 mkdir deploy
 copy /y "dist\PulseFlow.exe" "deploy\PulseFlow.exe" >nul
 copy /y "README.md" "deploy\README.md" >nul
+if exist "산업용PC_배포안내.txt" copy /y "산업용PC_배포안내.txt" "deploy\산업용PC_배포안내.txt" >nul
 powershell -NoProfile -Command "Compress-Archive -Path 'deploy\*' -DestinationPath 'PulseFlow_deploy.zip' -Force"
 
 echo.
 echo Done. Output: dist\PulseFlow.exe
 echo Deploy folder: deploy
 echo Deploy ZIP: PulseFlow_deploy.zip
+echo Copy PulseFlow_deploy.zip to the industrial PC by USB.
 echo Note: Install NI-DAQmx Runtime on the industrial PC separately.
 pause
