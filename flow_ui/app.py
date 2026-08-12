@@ -1431,14 +1431,13 @@ class FlowControlApp(tk.Tk):
         self._tc_popup = popup
         popup.title("TC MONITORING · NI 9214")
         popup.configure(bg=COLORS["bg"])
-        popup.geometry("780x420")
-        popup.minsize(720, 380)
+        popup.transient(self)
 
-        frame = ttk.Frame(popup, style="App.TFrame", padding=12)
+        frame = ttk.Frame(popup, style="App.TFrame", padding=10)
         frame.pack(fill="both", expand=True)
 
         heading = ttk.Frame(frame, style="App.TFrame")
-        heading.pack(fill="x", pady=(0, 6))
+        heading.pack(fill="x", pady=(0, 4))
         ttk.Label(
             heading, text="TC MONITORING · NI 9214", style="PanelTitle.TLabel"
         ).pack(side="left")
@@ -1451,10 +1450,10 @@ class FlowControlApp(tk.Tk):
             frame,
             text="왼쪽 K TYPE CH0~4  |  오른쪽 T TYPE CH5~9  |  NI 9214 내장 CJC 자동 보상",
             style="Hint.TLabel",
-        ).pack(anchor="w", pady=(0, 6))
+        ).pack(anchor="w", pady=(0, 4))
 
         channel_row = ttk.Frame(frame, style="App.TFrame")
-        channel_row.pack(fill="x", pady=(0, 8))
+        channel_row.pack(fill="x", pady=(0, 6))
         self.tc_k_channel_var = tk.StringVar(value=self.channels.tc_k_inputs)
         self.tc_t_channel_var = tk.StringVar(value=self.channels.tc_t_inputs)
         ttk.Label(channel_row, text="K 채널", style="Panel.TLabel").pack(side="left")
@@ -1474,6 +1473,7 @@ class FlowControlApp(tk.Tk):
 
         self.tc_name_vars = [tk.StringVar(value=name) for name in self.tc_names]
         self.tc_value_labels = [None] * 10  # type: ignore[list-item]
+        row_pad = 2 if self.touch_mode else 3
 
         def build_group(
             parent: tk.Misc,
@@ -1482,6 +1482,7 @@ class FlowControlApp(tk.Tk):
             column: int,
         ) -> None:
             panel = self.panel(parent)
+            panel.configure(padding=6 if self.touch_mode else 8)
             self.place_panel(
                 panel,
                 row=0,
@@ -1490,7 +1491,7 @@ class FlowControlApp(tk.Tk):
                 padx=(0 if column == 0 else 6, 0),
             )
             ttk.Label(panel, text=title, style="PanelTitle.TLabel").grid(
-                row=0, column=0, columnspan=3, sticky="w", pady=(0, 8)
+                row=0, column=0, columnspan=3, sticky="w", pady=(0, 4)
             )
             for col, text in enumerate(("채널", "이름", "현재 온도")):
                 ttk.Label(panel, text=text, style="Hint.TLabel").grid(
@@ -1501,21 +1502,23 @@ class FlowControlApp(tk.Tk):
             for row, index in enumerate(channel_indexes, start=2):
                 ttk.Label(
                     panel, text=f"CH{index}", style="ValueSmall.TLabel"
-                ).grid(row=row, column=0, sticky="w", padx=3, pady=4)
+                ).grid(row=row, column=0, sticky="w", padx=3, pady=row_pad)
                 ttk.Entry(
                     panel, textvariable=self.tc_name_vars[index], width=10
-                ).grid(row=row, column=1, sticky="w", padx=3, pady=4)
+                ).grid(row=row, column=1, sticky="w", padx=3, pady=row_pad)
                 value_label = ttk.Label(
                     panel, text="— °C", style="Value.TLabel"
                 )
-                value_label.grid(row=row, column=2, sticky="ew", padx=6, pady=4)
+                value_label.grid(
+                    row=row, column=2, sticky="ew", padx=6, pady=row_pad
+                )
                 self.tc_value_labels[index] = value_label
 
         build_group(columns, "K TYPE · CH0~4", range(0, 5), 0)
         build_group(columns, "T TYPE · CH5~9", range(5, 10), 1)
 
         actions = ttk.Frame(frame, style="App.TFrame")
-        actions.pack(fill="x", pady=(10, 0))
+        actions.pack(fill="x", pady=(8, 0))
         ttk.Button(
             actions,
             text="이름 저장",
@@ -1525,6 +1528,19 @@ class FlowControlApp(tk.Tk):
         ttk.Button(actions, text="닫기", command=self._close_tc_popup).pack(
             side="right"
         )
+
+        # Size to full content so CH0~4 / CH5~9 and action buttons stay visible.
+        popup.update_idletasks()
+        screen_w = max(self.winfo_screenwidth(), 800)
+        screen_h = max(self.winfo_screenheight(), 600)
+        need_w = max(frame.winfo_reqwidth() + 20, 780)
+        need_h = max(frame.winfo_reqheight() + 28, 560)
+        width = min(need_w, screen_w - 24)
+        height = min(need_h, screen_h - 48)
+        x = max(0, (screen_w - width) // 2)
+        y = max(0, (screen_h - height) // 2)
+        popup.geometry(f"{width}x{height}+{x}+{y}")
+        popup.minsize(min(width, 720), min(height, 520))
 
         self.tc_running = True
         self._last_tc_read_at = 0.0
