@@ -12,12 +12,11 @@ PulseFlow 산업용 PC 배포 안내
 
 산업용 PC 필수 준비
 --------------------
-- NI-DAQmx Runtime 설치
-- NI MAX 장치명:
-  cDAQ2
-  cDAQ2Mod1 (NI 9264)  REF.W=ao0 / NG PUMP=ao1
-  cDAQ2Mod2 (NI 9422)
-  cDAQ2Mod3 (NI 9477)
+- NI-DAQmx Runtime 설치 (PulseFlow.exe와 같은 64비트 권장)
+- NI MAX에서 cDAQ + NI 9264 / 9422 / 9477 모듈이 보여야 함
+- 기본 장치명은 cDAQ2Mod1/2/3 이지만, 새 PC는 cDAQ1Mod1/2/3 일 수 있음
+- PulseFlow는 모듈 종류(9264/9422/9477/9214)로 자동 매칭 시도
+- 그래도 안 되면 설정에서 채널 문자열을 NI MAX 이름과 맞출 것
 - MP5Y USB-RS485 COM 포트 확인 (기본 COM3)
 
 라벨
