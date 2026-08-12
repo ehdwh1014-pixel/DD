@@ -235,9 +235,7 @@ class FlowControlApp(tk.Tk):
         self._feedback_elapsed_s = 0.0
         self.tc_running = False
         self.tc_names = [f"TC {index}" for index in range(10)]
-        self.tc_offsets = [0.0] * 10
         self.tc_name_vars: list[tk.StringVar] = []
-        self.tc_offset_vars: list[tk.StringVar] = []
         self.tc_value_labels: list[ttk.Label] = []
         self._last_tc_read_at = 0.0
 
@@ -1433,10 +1431,10 @@ class FlowControlApp(tk.Tk):
         self._tc_popup = popup
         popup.title("TC MONITORING · NI 9214")
         popup.configure(bg=COLORS["bg"])
-        popup.geometry("820x600")
-        popup.minsize(720, 520)
+        popup.geometry("560x520")
+        popup.minsize(500, 460)
 
-        frame = ttk.Frame(popup, style="App.TFrame", padding=14)
+        frame = ttk.Frame(popup, style="App.TFrame", padding=12)
         frame.pack(fill="both", expand=True)
 
         heading = ttk.Frame(frame, style="App.TFrame")
@@ -1451,10 +1449,7 @@ class FlowControlApp(tk.Tk):
 
         ttk.Label(
             frame,
-            text=(
-                "CH0~4: K TYPE  |  CH5~9: T TYPE  |  NI 9214 내장 CJC 냉접점 보상"
-                " + 채널별 보정값 적용"
-            ),
+            text="CH0~4: K TYPE  |  CH5~9: T TYPE  |  NI 9214 내장 CJC 자동 보상",
             style="Hint.TLabel",
         ).pack(anchor="w", pady=(0, 8))
 
@@ -1464,67 +1459,50 @@ class FlowControlApp(tk.Tk):
         self.tc_t_channel_var = tk.StringVar(value=self.channels.tc_t_inputs)
         ttk.Label(channel_row, text="K 채널", style="Panel.TLabel").pack(side="left")
         ttk.Entry(
-            channel_row, textvariable=self.tc_k_channel_var, width=24
-        ).pack(side="left", padx=(5, 12))
+            channel_row, textvariable=self.tc_k_channel_var, width=18
+        ).pack(side="left", padx=(5, 10))
         ttk.Label(channel_row, text="T 채널", style="Panel.TLabel").pack(side="left")
         ttk.Entry(
-            channel_row, textvariable=self.tc_t_channel_var, width=24
+            channel_row, textvariable=self.tc_t_channel_var, width=18
         ).pack(side="left", padx=(5, 0))
 
         table = self.panel(frame)
         table._card.pack(fill="both", expand=True)  # type: ignore[attr-defined]
-        for column, weight in enumerate((0, 0, 1, 0, 0)):
+        for column, weight in enumerate((0, 0, 0, 1)):
             table.columnconfigure(column, weight=weight)
-        headings = ("채널", "TYPE", "온도 이름 (클릭 입력)", "보정 °C", "현재 온도")
+        headings = ("채널", "TYPE", "이름", "현재 온도")
         for column, text in enumerate(headings):
             ttk.Label(table, text=text, style="PanelTitle.TLabel").grid(
-                row=0, column=column, sticky="ew", padx=5, pady=(0, 6)
+                row=0, column=column, sticky="ew", padx=4, pady=(0, 6)
             )
 
         self.tc_name_vars = []
-        self.tc_offset_vars = []
         self.tc_value_labels = []
         for index in range(10):
             tc_type = "K" if index < 5 else "T"
             name_var = tk.StringVar(value=self.tc_names[index])
-            offset_var = tk.StringVar(value=f"{self.tc_offsets[index]:.2f}")
             self.tc_name_vars.append(name_var)
-            self.tc_offset_vars.append(offset_var)
 
             ttk.Label(
                 table, text=f"CH{index}", style="ValueSmall.TLabel"
-            ).grid(row=index + 1, column=0, padx=5, pady=3)
+            ).grid(row=index + 1, column=0, padx=4, pady=3)
             ttk.Label(
-                table, text=f"{tc_type} TYPE", style="Panel.TLabel"
-            ).grid(row=index + 1, column=1, padx=5, pady=3)
-            ttk.Entry(table, textvariable=name_var, width=28).grid(
-                row=index + 1, column=2, sticky="ew", padx=5, pady=3
+                table, text=f"{tc_type}", style="Panel.TLabel"
+            ).grid(row=index + 1, column=1, padx=4, pady=3)
+            ttk.Entry(table, textvariable=name_var, width=12).grid(
+                row=index + 1, column=2, sticky="w", padx=4, pady=3
             )
-            offset_entry = ttk.Entry(
-                table, textvariable=offset_var, width=9, justify="center"
-            )
-            offset_entry.grid(row=index + 1, column=3, padx=5, pady=3)
-            if self.touch_mode:
-                offset_entry.bind(
-                    "<Button-1>",
-                    lambda _event, var=offset_var, channel=index: (
-                        self.open_numeric_keypad(
-                            var, f"TC CH{channel} 보정값 (°C)", -50.0, 50.0, 2
-                        ),
-                        "break",
-                    )[1],
-                )
             value_label = ttk.Label(
-                table, text="— °C", style="ValueSmall.TLabel"
+                table, text="— °C", style="Value.TLabel"
             )
-            value_label.grid(row=index + 1, column=4, padx=8, pady=3, sticky="e")
+            value_label.grid(row=index + 1, column=3, padx=8, pady=3, sticky="ew")
             self.tc_value_labels.append(value_label)
 
         actions = ttk.Frame(frame, style="App.TFrame")
         actions.pack(fill="x", pady=(10, 0))
         ttk.Button(
             actions,
-            text="이름 / 보정 저장",
+            text="이름 저장",
             style="TouchStart.TButton" if self.touch_mode else "Start.TButton",
             command=self.save_tc_settings,
         ).pack(side="left")
@@ -1576,40 +1554,19 @@ class FlowControlApp(tk.Tk):
             return
 
         for index, raw_value in enumerate(values):
-            try:
-                offset = float(self.tc_offset_vars[index].get().strip())
-            except ValueError:
-                offset = self.tc_offsets[index]
-            corrected = raw_value + offset
             self.tc_value_labels[index].configure(
-                text=f"{corrected:.1f} °C", foreground=COLORS["title"]
+                text=f"{raw_value:.1f} °C", foreground=COLORS["title"]
             )
         self._refresh_tc_status()
 
     def _sync_tc_inputs(self, show_error: bool = True) -> bool:
+        del show_error
         if not self.tc_name_vars:
             return True
-        names: list[str] = []
-        offsets: list[float] = []
-        for index in range(10):
-            names.append(self.tc_name_vars[index].get().strip() or f"TC {index}")
-            try:
-                offset = float(self.tc_offset_vars[index].get().strip())
-            except ValueError:
-                if show_error:
-                    messagebox.showerror(
-                        "입력 오류", f"TC CH{index} 보정값은 숫자로 입력하세요."
-                    )
-                return False
-            if not -50.0 <= offset <= 50.0:
-                if show_error:
-                    messagebox.showerror(
-                        "범위 오류", f"TC CH{index} 보정값은 -50~50 °C 범위입니다."
-                    )
-                return False
-            offsets.append(offset)
-        self.tc_names = names
-        self.tc_offsets = offsets
+        self.tc_names = [
+            self.tc_name_vars[index].get().strip() or f"TC {index}"
+            for index in range(10)
+        ]
         if hasattr(self, "tc_k_channel_var"):
             self.channels.tc_k_inputs = (
                 self.tc_k_channel_var.get().strip() or self.channels.tc_k_inputs
@@ -1631,7 +1588,6 @@ class FlowControlApp(tk.Tk):
             self._tc_popup.destroy()
         self._tc_popup = None
         self.tc_name_vars = []
-        self.tc_offset_vars = []
         self.tc_value_labels = []
 
     def open_ao_popup(self) -> None:
@@ -2772,7 +2728,6 @@ class FlowControlApp(tk.Tk):
             "tc_k_inputs": self.channels.tc_k_inputs,
             "tc_t_inputs": self.channels.tc_t_inputs,
             "tc_names": self.tc_names,
-            "tc_offsets": self.tc_offsets,
             "mp5y_port": self.mp5y_config.port,
             "mp5y_slave_id": self.mp5y_config.slave_id,
             "mp5y_baudrate": self.mp5y_config.baudrate,
