@@ -2775,12 +2775,6 @@ class FlowControlApp(tk.Tk):
         tc_names = data.get("tc_names", self.tc_names)
         if isinstance(tc_names, list) and len(tc_names) == 10:
             self.tc_names = [str(name) for name in tc_names]
-        tc_offsets = data.get("tc_offsets", self.tc_offsets)
-        if isinstance(tc_offsets, list) and len(tc_offsets) == 10:
-            try:
-                self.tc_offsets = [float(offset) for offset in tc_offsets]
-            except (TypeError, ValueError):
-                self.tc_offsets = [0.0] * 10
         self.daq.channels = self.channels
         self._refresh_ng_ao_label()
         self.mp5y_config.port = str(data.get("mp5y_port", "COM3"))
