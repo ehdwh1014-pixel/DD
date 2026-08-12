@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.metadata
 import shutil
 import subprocess
 import sys
@@ -12,6 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 DIST = ROOT / "dist"
 DEPLOY = ROOT / "deploy"
+HOOKS = ROOT / "pyinstaller_hooks"
 EXE_NAME = "PulseFlow.exe"
 ZIP_NAME = "PulseFlow_deploy.zip"
 
@@ -21,6 +23,73 @@ def run(command: list[str]) -> None:
     completed = subprocess.run(command, cwd=ROOT)
     if completed.returncode != 0:
         raise SystemExit(completed.returncode)
+
+
+def verify_nidaqmx_import() -> str:
+    import nidaqmx  # noqa: WPS433 - build-time dependency check
+
+    version = importlib.metadata.version("nidaqmx")
+    print(f"nidaqmx import OK · version {version}")
+    return version
+
+
+def pyinstaller_command() -> list[str]:
+    hooks_dir = HOOKS.resolve()
+    command = [
+        sys.executable,
+        "-m",
+        "PyInstaller",
+        "--noconfirm",
+        "--clean",
+        "--onefile",
+        "--windowed",
+        "--name",
+        "PulseFlow",
+        "--icon",
+        str(ROOT / "flow_ui" / "assets" / "app_icon.ico"),
+        "--add-data",
+        f"{ROOT / 'flow_ui' / 'assets' / 'app_icon.ico'};flow_ui/assets",
+        "--add-data",
+        f"{ROOT / 'flow_ui' / 'assets' / 'app_icon.png'};flow_ui/assets",
+        "--additional-hooks-dir",
+        str(hooks_dir),
+        "--copy-metadata",
+        "nidaqmx",
+        "--copy-metadata",
+        "grpcio",
+        "--collect-all",
+        "nidaqmx",
+        "--collect-all",
+        "grpc",
+        "--collect-all",
+        "pymodbus",
+        "--hidden-import",
+        "nidaqmx",
+        "--hidden-import",
+        "nidaqmx.system",
+        "--hidden-import",
+        "nidaqmx.constants",
+        "--hidden-import",
+        "nidaqmx.task",
+        "--hidden-import",
+        "nidaqmx.errors",
+        "--hidden-import",
+        "nidaqmx.stream_writers",
+        "--hidden-import",
+        "nidaqmx.stream_readers",
+        "--hidden-import",
+        "grpc",
+        "--hidden-import",
+        "pymodbus",
+        "--hidden-import",
+        "pymodbus.client",
+        "--hidden-import",
+        "serial",
+        "--hidden-import",
+        "serial.tools.list_ports",
+        str(ROOT / "pump.py"),
+    ]
+    return command
 
 
 def main() -> int:
@@ -40,46 +109,8 @@ def main() -> int:
         ]
     )
 
-    run(
-        [
-            sys.executable,
-            "-m",
-            "PyInstaller",
-            "--noconfirm",
-            "--clean",
-            "--onefile",
-            "--windowed",
-            "--name",
-            "PulseFlow",
-            "--icon",
-            str(ROOT / "flow_ui" / "assets" / "app_icon.ico"),
-            "--add-data",
-            f"{ROOT / 'flow_ui' / 'assets' / 'app_icon.ico'};flow_ui/assets",
-            "--add-data",
-            f"{ROOT / 'flow_ui' / 'assets' / 'app_icon.png'};flow_ui/assets",
-            "--collect-all",
-            "nidaqmx",
-            "--collect-all",
-            "pymodbus",
-            "--hidden-import",
-            "nidaqmx",
-            "--hidden-import",
-            "nidaqmx.system",
-            "--hidden-import",
-            "nidaqmx.constants",
-            "--hidden-import",
-            "nidaqmx.stream_writers",
-            "--hidden-import",
-            "nidaqmx.stream_readers",
-            "--hidden-import",
-            "pymodbus",
-            "--hidden-import",
-            "pymodbus.client",
-            "--hidden-import",
-            "serial",
-            "pump.py",
-        ]
-    )
+    verify_nidaqmx_import()
+    run(pyinstaller_command())
 
     exe_path = DIST / EXE_NAME
     if not exe_path.exists():
@@ -107,8 +138,12 @@ def main() -> int:
     print("BUILD OK")
     print(f"EXE : {exe_path}")
     print(f"ZIP : {zip_path}")
-    print("Copy the ZIP or EXE to the industrial PC.")
-    print("Industrial PC still needs NI-DAQmx Runtime.")
+    print()
+    print("Industrial PC checklist:")
+    print("- Install NI-DAQmx Runtime 64-bit (MAX alone is not enough)")
+    print("- Run the NEW PulseFlow.exe from this build")
+    print("- If status still says 'nidaqmx 패키지 없음', rebuild on Windows 64-bit Python")
+    print("- MP5Y COM port may differ from COM3 on a new PC (check Device Manager)")
     return 0
 
 

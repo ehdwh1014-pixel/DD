@@ -12,12 +12,12 @@ PulseFlow Industrial PC Deploy Guide
 
 Industrial PC requirements
 --------------------------
-- Install NI-DAQmx Runtime (same bitness as PulseFlow.exe, usually 64-bit)
-- NI MAX must show cDAQ chassis + NI 9264 / 9422 / 9477 modules
-- Default device names are cDAQ2Mod1/2/3, but a new PC may use cDAQ1Mod1/2/3
-- PulseFlow auto-matches modules by model (9264/9422/9477/9214) when names differ
-- If still failing, open Settings and set channel strings to match NI MAX names
-- Confirm MP5Y USB-RS485 COM port (default COM3)
+- Install NI-DAQmx Runtime 64-bit (same bitness as PulseFlow.exe)
+- NI MAX must show cDAQ + NI 9264 / 9422 / 9477 modules
+- PulseFlow.exe must be built on a Windows PC with build_exe.bat
+  (old EXE missing nidaqmx metadata shows: "nidaqmx import 실패 / 패키지 없음")
+- Default device names are cDAQ2Mod1/2/3; PulseFlow auto-maps by module model if needed
+- MP5Y USB-RS485 COM port may not be COM3 on a new PC (check Device Manager)
 
 Labels
 ------

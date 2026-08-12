@@ -142,8 +142,18 @@ class DaqService:
             import nidaqmx  # type: ignore
 
             self._nidaqmx = nidaqmx
-        except ImportError:
-            self.error = "nidaqmx 패키지 없음 (시뮬레이션). EXE 재빌드 또는 NI-DAQmx 확인."
+        except ImportError as exc:
+            detail = str(exc).strip()
+            if detail:
+                self.error = (
+                    "nidaqmx import 실패 (시뮬레이션). "
+                    f"{detail} · Windows PC에서 build_exe.bat로 EXE 재빌드 필요"
+                )
+            else:
+                self.error = (
+                    "nidaqmx import 실패 (시뮬레이션). "
+                    "Windows PC에서 build_exe.bat로 EXE 재빌드 필요"
+                )
 
     def _reset_io_tasks(self) -> None:
         """Drop cached tasks after channel/device remapping."""
