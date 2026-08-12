@@ -1,7 +1,7 @@
 """Autonics MP5Y-25 Modbus RTU reader (USB-RS485).
 
 Default link settings match Autonics factory defaults:
-  COM3, 9600 baud, 8N2, slave address 1
+  COM9, 9600 baud, 8N2, slave address 1
 
 Input registers (Func 04):
   0x03E9 / 0x03EA : PV (Autonics 2-word value, -19999..99999)
@@ -45,7 +45,7 @@ MODE_NAMES = {
 
 @dataclass
 class Mp5yConfig:
-    port: str = "COM3"
+    port: str = "COM9"
     slave_id: int = 1
     baudrate: int = 9600
     parity: str = "N"

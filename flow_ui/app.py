@@ -203,7 +203,7 @@ class FlowControlApp(tk.Tk):
         self._apply_window_icon()
 
         self.channels = ChannelConfig()
-        self.mp5y_config = Mp5yConfig(port="COM3")
+        self.mp5y_config = Mp5yConfig(port="COM9")
         self.daq = DaqService(self.channels)
         self.mp5y = Mp5yService(self.mp5y_config)
         self.lpf = LowPassFilter()
@@ -1901,7 +1901,7 @@ class FlowControlApp(tk.Tk):
             "【MP5Y-25 → USB-RS485】\n"
             "  MP5Y A(+)  →  컨버터 A\n"
             "  MP5Y B(−)  →  컨버터 B\n"
-            "  PC COM 포트: COM3\n"
+            "  PC COM 포트: COM9\n"
             "  통신: 9600 / 8 / None / Stop2 / Addr 1\n"
             "\n"
             "【REF.W → NI 9264 ao0】\n"
@@ -2005,7 +2005,7 @@ class FlowControlApp(tk.Tk):
             self.channels.igniter_output = igniter_do_var.get().strip() or self.channels.igniter_output
             self.channels.inverter_run = inverter_do_var.get().strip() or self.channels.inverter_run
             self.daq.channels = self.channels
-            self.mp5y_config.port = port_var.get().strip() or "COM3"
+            self.mp5y_config.port = port_var.get().strip() or "COM9"
             try:
                 self.mp5y_config.slave_id = int(slave_var.get().strip())
             except ValueError:
@@ -2809,7 +2809,7 @@ class FlowControlApp(tk.Tk):
             self.tc_names = [str(name) for name in tc_names]
         self.daq.channels = self.channels
         self._refresh_ng_ao_label()
-        self.mp5y_config.port = str(data.get("mp5y_port", "COM3"))
+        self.mp5y_config.port = str(data.get("mp5y_port", "COM9"))
         self.mp5y_config.slave_id = int(data.get("mp5y_slave_id", 1))
         self.mp5y_config.baudrate = int(data.get("mp5y_baudrate", 9600))
         self.mp5y_config.value_mode = str(data.get("mp5y_value_mode", "flow_ccpm"))
