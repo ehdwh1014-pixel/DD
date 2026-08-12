@@ -27,6 +27,35 @@ DI_MODULE = "cDAQ2Mod2"  # NI 9422
 DO_MODULE = "cDAQ2Mod3"  # NI 9477
 TC_MODULE = "cDAQ2Mod4"  # optional NI 9214
 
+PRODUCT_AO = "9264"
+PRODUCT_DI = "9422"
+PRODUCT_DO = "9477"
+PRODUCT_TC = "9214"
+
+
+def device_from_channel(channel: str) -> str:
+    return channel.split("/", 1)[0]
+
+
+def product_matches(product_type: str, model: str) -> bool:
+    return model in str(product_type or "").replace(" ", "").upper()
+
+
+def discover_modules_by_product(devices: dict[str, object]) -> dict[str, str]:
+    """Map AO/DI/DO/TC roles to NI MAX device names by module model."""
+    roles = ("ao", "di", "do", "tc")
+    models = (PRODUCT_AO, PRODUCT_DI, PRODUCT_DO, PRODUCT_TC)
+    found: dict[str, str] = {}
+    for device in devices.values():
+        product = str(getattr(device, "product_type", "") or "")
+        for role, model in zip(roles, models):
+            if role in found:
+                continue
+            if product_matches(product, model):
+                found[role] = str(getattr(device, "name", ""))
+                break
+    return found
+
 
 class DaqError(RuntimeError):
     """Raised when an expected hardware operation cannot be completed."""
@@ -50,6 +79,31 @@ class ChannelConfig:
     spare_do: str = f"{DO_MODULE}/port0/line5"
     tc_k_inputs: str = f"{TC_MODULE}/ai0:4"
     tc_t_inputs: str = f"{TC_MODULE}/ai5:9"
+
+
+def apply_module_names(
+    channels: ChannelConfig,
+    *,
+    ao: str | None = None,
+    di: str | None = None,
+    do: str | None = None,
+    tc: str | None = None,
+) -> None:
+    if ao:
+        channels.ao_pump = f"{ao}/ao0"
+        channels.ao_ng_pump = f"{ao}/ao1"
+        channels.spare_ao = f"{ao}/ao2"
+    if di:
+        channels.level_inputs = f"{di}/port0/line0:5"
+        channels.flame_input = f"{di}/port0/line6"
+    if do:
+        channels.valve_outputs = f"{do}/port0/line0:2"
+        channels.igniter_output = f"{do}/port0/line3"
+        channels.inverter_run = f"{do}/port0/line4"
+        channels.spare_do = f"{do}/port0/line5"
+    if tc:
+        channels.tc_k_inputs = f"{tc}/ai0:4"
+        channels.tc_t_inputs = f"{tc}/ai5:9"
 
 
 class DaqService:
@@ -91,6 +145,40 @@ class DaqService:
         except ImportError:
             self.error = "nidaqmx 패키지 없음 (시뮬레이션). EXE 재빌드 또는 NI-DAQmx 확인."
 
+    def _reset_io_tasks(self) -> None:
+        """Drop cached tasks after channel/device remapping."""
+        self._close_di_task()
+        self._close_do_task()
+        self._close_di_flame_task()
+        self._close_do_igniter_task()
+        self._close_do_inverter_task()
+        self._close_do_spare_task()
+        self._close_tc_task()
+        self._close_ao_task()
+
+    def _try_auto_map_devices(self, devices: dict[str, object]) -> dict[str, str]:
+        """Match NI 9264/9422/9477/9214 by product type when names differ."""
+        configured = {
+            "ao": device_from_channel(self.channels.ao_pump),
+            "di": device_from_channel(self.channels.level_inputs),
+            "do": device_from_channel(self.channels.valve_outputs),
+            "tc": device_from_channel(self.channels.tc_k_inputs),
+        }
+        discovered = discover_modules_by_product(devices)
+        remap: dict[str, str] = {}
+        for role in ("ao", "di", "do", "tc"):
+            current = configured[role]
+            if current in devices:
+                continue
+            candidate = discovered.get(role)
+            if candidate and candidate != current:
+                remap[role] = candidate
+        if not remap:
+            return {}
+        apply_module_names(self.channels, **remap)
+        self._reset_io_tasks()
+        return remap
+
     def check_connection(self) -> bool:
         if self._nidaqmx is None:
             self.available = False
@@ -103,26 +191,46 @@ class DaqService:
                 for device in self._nidaqmx.system.System.local().devices
             }
             found = sorted(devices)
-            self.available = AO_MODULE in devices
-            self.level_available = DI_MODULE in devices and DO_MODULE in devices
-            tc_device = self.channels.tc_k_inputs.split("/", 1)[0]
+            auto_map = self._try_auto_map_devices(devices)
+
+            ao_device = device_from_channel(self.channels.ao_pump)
+            di_device = device_from_channel(self.channels.level_inputs)
+            do_device = device_from_channel(self.channels.valve_outputs)
+            tc_device = device_from_channel(self.channels.tc_k_inputs)
+
+            self.available = ao_device in devices
+            self.level_available = di_device in devices and do_device in devices
             self.tc_available = tc_device in devices
             if not self.tc_available:
                 self._close_tc_task()
-            missing = [name for name in self.REQUIRED_DEVICES if name not in devices]
-            if not missing:
-                self.error = "연결됨"
+
+            missing = [
+                name
+                for name, ok in (
+                    (ao_device, self.available),
+                    (di_device, di_device in devices),
+                    (do_device, do_device in devices),
+                )
+                if not ok
+            ]
+            if self.available and self.level_available:
+                if auto_map:
+                    mapped = ", ".join(f"{role}={name}" for role, name in auto_map.items())
+                    self.error = f"연결됨 · 자동매칭 {mapped}"
+                else:
+                    self.error = "연결됨"
             elif found:
                 self.error = (
                     f"장치명 불일치 · 필요 {', '.join(missing)} / "
-                    f"PC감지 {', '.join(found)}"
+                    f"PC감지 {', '.join(found)} · 설정에서 채널명 수정 또는 "
+                    "NI MAX에서 장치명 확인"
                 )
             else:
                 self.error = "NI 장치 없음 · NI-DAQmx/케이블 확인"
             states = [
-                f"9264 {'OK' if self.available else '없음'}",
-                f"9422 {'OK' if DI_MODULE in devices else '없음'}",
-                f"9477 {'OK' if DO_MODULE in devices else '없음'}",
+                f"9264({ao_device}) {'OK' if self.available else '없음'}",
+                f"9422({di_device}) {'OK' if di_device in devices else '없음'}",
+                f"9477({do_device}) {'OK' if do_device in devices else '없음'}",
                 f"9214({tc_device}) {'OK' if self.tc_available else '선택/없음'}",
             ]
             self.device_summary = " / ".join(states)
