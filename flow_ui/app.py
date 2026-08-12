@@ -691,10 +691,18 @@ class FlowControlApp(tk.Tk):
             current, text="제어 시작  --:--:--", style="ValueSmall.TLabel"
         )
         self.control_start_label.pack(anchor="w", pady=(0, 3))
+        injection_row = ttk.Frame(current, style="Panel.TFrame")
+        injection_row.pack(fill="x", pady=(0, 3))
         self.injection_time_label = ttk.Label(
-            current, text="물 주입시간  00:00:00", style="ValueSmall.TLabel"
+            injection_row, text="물 주입시간  00:00:00", style="ValueSmall.TLabel"
         )
-        self.injection_time_label.pack(anchor="w", pady=(0, 3))
+        self.injection_time_label.pack(side="left")
+        ttk.Button(
+            injection_row,
+            text="초기화",
+            style="Touch.TButton",
+            command=self.reset_injection_time,
+        ).pack(side="right")
 
         self.feedback_graph = TrendGraph(
             current,
@@ -1003,10 +1011,15 @@ class FlowControlApp(tk.Tk):
             focus, text="제어 시작  --:--:--", style="ValueSmall.TLabel"
         )
         self.control_start_label.pack(anchor="w", pady=(8, 0))
+        injection_row = ttk.Frame(focus, style="Panel.TFrame")
+        injection_row.pack(fill="x", pady=(4, 0))
         self.injection_time_label = ttk.Label(
-            focus, text="물 주입시간  00:00:00", style="ValueSmall.TLabel"
+            injection_row, text="물 주입시간  00:00:00", style="ValueSmall.TLabel"
         )
-        self.injection_time_label.pack(anchor="w", pady=(4, 0))
+        self.injection_time_label.pack(side="left")
+        ttk.Button(
+            injection_row, text="초기화", command=self.reset_injection_time
+        ).pack(side="right")
         self.focus_err = ttk.Label(focus, text="오차: 0.0 cc/min", style="ValueSmall.TLabel")
         self.fb_hz = ttk.Label(focus, text="MP5Y: 대기", style="Hint.TLabel")
 
@@ -2001,7 +2014,6 @@ class FlowControlApp(tk.Tk):
             self.lpf.reset()
             self._last_loop_at = time.monotonic()
             self._feedback_started_wall = datetime.now()
-            self._feedback_elapsed_s = 0.0
             self._feedback_timer_started_at = time.monotonic()
             self._refresh_control_start_label()
             self.feedback_graph.clear()
@@ -2375,6 +2387,14 @@ class FlowControlApp(tk.Tk):
                 0.0, time.monotonic() - self._feedback_timer_started_at
             )
             self._feedback_timer_started_at = None
+
+    def reset_injection_time(self) -> None:
+        """Clear accumulated water injection time, including while running."""
+        self._feedback_elapsed_s = 0.0
+        self._feedback_timer_started_at = (
+            time.monotonic() if self.feedback_running else None
+        )
+        self._refresh_injection_time()
 
     def _refresh_injection_time(self) -> None:
         elapsed = self._feedback_elapsed_s
