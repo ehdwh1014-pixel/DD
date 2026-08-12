@@ -1431,14 +1431,14 @@ class FlowControlApp(tk.Tk):
         self._tc_popup = popup
         popup.title("TC MONITORING · NI 9214")
         popup.configure(bg=COLORS["bg"])
-        popup.geometry("560x520")
-        popup.minsize(500, 460)
+        popup.geometry("780x420")
+        popup.minsize(720, 380)
 
         frame = ttk.Frame(popup, style="App.TFrame", padding=12)
         frame.pack(fill="both", expand=True)
 
         heading = ttk.Frame(frame, style="App.TFrame")
-        heading.pack(fill="x", pady=(0, 8))
+        heading.pack(fill="x", pady=(0, 6))
         ttk.Label(
             heading, text="TC MONITORING · NI 9214", style="PanelTitle.TLabel"
         ).pack(side="left")
@@ -1449,9 +1449,9 @@ class FlowControlApp(tk.Tk):
 
         ttk.Label(
             frame,
-            text="CH0~4: K TYPE  |  CH5~9: T TYPE  |  NI 9214 내장 CJC 자동 보상",
+            text="왼쪽 K TYPE CH0~4  |  오른쪽 T TYPE CH5~9  |  NI 9214 내장 CJC 자동 보상",
             style="Hint.TLabel",
-        ).pack(anchor="w", pady=(0, 8))
+        ).pack(anchor="w", pady=(0, 6))
 
         channel_row = ttk.Frame(frame, style="App.TFrame")
         channel_row.pack(fill="x", pady=(0, 8))
@@ -1460,43 +1460,59 @@ class FlowControlApp(tk.Tk):
         ttk.Label(channel_row, text="K 채널", style="Panel.TLabel").pack(side="left")
         ttk.Entry(
             channel_row, textvariable=self.tc_k_channel_var, width=18
-        ).pack(side="left", padx=(5, 10))
+        ).pack(side="left", padx=(5, 12))
         ttk.Label(channel_row, text="T 채널", style="Panel.TLabel").pack(side="left")
         ttk.Entry(
             channel_row, textvariable=self.tc_t_channel_var, width=18
         ).pack(side="left", padx=(5, 0))
 
-        table = self.panel(frame)
-        table._card.pack(fill="both", expand=True)  # type: ignore[attr-defined]
-        for column, weight in enumerate((0, 0, 0, 1)):
-            table.columnconfigure(column, weight=weight)
-        headings = ("채널", "TYPE", "이름", "현재 온도")
-        for column, text in enumerate(headings):
-            ttk.Label(table, text=text, style="PanelTitle.TLabel").grid(
-                row=0, column=column, sticky="ew", padx=4, pady=(0, 6)
-            )
+        columns = ttk.Frame(frame, style="App.TFrame")
+        columns.pack(fill="both", expand=True)
+        columns.columnconfigure(0, weight=1, uniform="tc")
+        columns.columnconfigure(1, weight=1, uniform="tc")
+        columns.rowconfigure(0, weight=1)
 
-        self.tc_name_vars = []
-        self.tc_value_labels = []
-        for index in range(10):
-            tc_type = "K" if index < 5 else "T"
-            name_var = tk.StringVar(value=self.tc_names[index])
-            self.tc_name_vars.append(name_var)
+        self.tc_name_vars = [tk.StringVar(value=name) for name in self.tc_names]
+        self.tc_value_labels = [None] * 10  # type: ignore[list-item]
 
-            ttk.Label(
-                table, text=f"CH{index}", style="ValueSmall.TLabel"
-            ).grid(row=index + 1, column=0, padx=4, pady=3)
-            ttk.Label(
-                table, text=f"{tc_type}", style="Panel.TLabel"
-            ).grid(row=index + 1, column=1, padx=4, pady=3)
-            ttk.Entry(table, textvariable=name_var, width=12).grid(
-                row=index + 1, column=2, sticky="w", padx=4, pady=3
+        def build_group(
+            parent: tk.Misc,
+            title: str,
+            channel_indexes: range,
+            column: int,
+        ) -> None:
+            panel = self.panel(parent)
+            self.place_panel(
+                panel,
+                row=0,
+                column=column,
+                sticky="nsew",
+                padx=(0 if column == 0 else 6, 0),
             )
-            value_label = ttk.Label(
-                table, text="— °C", style="Value.TLabel"
+            ttk.Label(panel, text=title, style="PanelTitle.TLabel").grid(
+                row=0, column=0, columnspan=3, sticky="w", pady=(0, 8)
             )
-            value_label.grid(row=index + 1, column=3, padx=8, pady=3, sticky="ew")
-            self.tc_value_labels.append(value_label)
+            for col, text in enumerate(("채널", "이름", "현재 온도")):
+                ttk.Label(panel, text=text, style="Hint.TLabel").grid(
+                    row=1, column=col, sticky="w" if col < 2 else "ew", padx=3
+                )
+            panel.columnconfigure(1, weight=0)
+            panel.columnconfigure(2, weight=1)
+            for row, index in enumerate(channel_indexes, start=2):
+                ttk.Label(
+                    panel, text=f"CH{index}", style="ValueSmall.TLabel"
+                ).grid(row=row, column=0, sticky="w", padx=3, pady=4)
+                ttk.Entry(
+                    panel, textvariable=self.tc_name_vars[index], width=10
+                ).grid(row=row, column=1, sticky="w", padx=3, pady=4)
+                value_label = ttk.Label(
+                    panel, text="— °C", style="Value.TLabel"
+                )
+                value_label.grid(row=row, column=2, sticky="ew", padx=6, pady=4)
+                self.tc_value_labels[index] = value_label
+
+        build_group(columns, "K TYPE · CH0~4", range(0, 5), 0)
+        build_group(columns, "T TYPE · CH5~9", range(5, 10), 1)
 
         actions = ttk.Frame(frame, style="App.TFrame")
         actions.pack(fill="x", pady=(10, 0))
