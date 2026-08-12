@@ -17,6 +17,7 @@ VS Code / Python 데스크톱 UI로 **펄스 유량계 → MP5Y-25(유량 표시
 | 점화 SSR | NI **9477** `cDAQ2Mod3/port0/line3` | SSR 입력 수동 ON/OFF |
 | 인버터 RUN | NI **9477** `cDAQ2Mod3/port0/line4` | iG5A P1(FX)–CM |
 | 여유 DO | NI **9477** `cDAQ2Mod3/port0/line5` | **DO 5** 수동 ON/OFF |
+| TC 모니터링(선택) | NI **9214** `cDAQ2Mod4/ai0:9` | K형 CH0~4 / T형 CH5~9 |
 
 ## MP5Y 유량 표시 설정 (확정)
 
@@ -119,6 +120,17 @@ DO가 ON이면 White(SIG)가 0V로 당겨져 밸브에 **열림 명령**을 줍�
 - **MP5Y/COM3 미연결:** 유량 PV가 필요한 피드백 운전만 정지합니다.
 - MP5Y가 끊겨도 NI-DAQ이 정상이면 레벨센서 자동 밸브 제어, 점화 DO, 메인 NG PUMP(AO1), I/O TEST의 REF.W(AO0)·DO0~2·AO2·DO5는 계속 사용할 수 있습니다.
 - 상태 표시는 `COM3 미연결`, `COM3 연결 · 응답 없음`, `통신 ON`을 구분합니다. COM3 포트가 보인다는 사실만으로 MP5Y Modbus 응답까지 정상이라고 판단하지 않습니다.
+
+## TC MONITORING (선택 NI 9214)
+
+- NI 9214를 사용하지 않을 때는 연결하지 않아도 기존 AO/DI/DO와 MP5Y 제어가 정상 동작합니다.
+- 기본 장치명은 `cDAQ2Mod4`이며, TC 창에서 K/T 채널 문자열을 바꿀 수 있습니다.
+- CH0~4는 K TYPE, CH5~9는 T TYPE으로 읽습니다.
+- DAQmx의 NI 9214 **내장 CJC(냉접점 보상)**를 적용해 °C로 읽습니다.
+- 각 행의 `온도 이름`을 클릭해 측정 위치나 용도를 직접 입력할 수 있습니다.
+- 각 채널에 `보정 °C`를 -50~+50 °C 범위로 추가 적용할 수 있습니다.
+- `이름 / 보정 저장`을 누르면 채널 이름과 보정값이 `settings.json`에 저장됩니다.
+- 모듈 탈착 또는 TC 읽기 오류는 기존 펌프·밸브 제어를 정지시키지 않습니다.
 
 ## VS Code 설치 및 소스 실행 (Windows)
 

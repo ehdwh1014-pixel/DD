@@ -216,6 +216,7 @@ class FlowControlApp(tk.Tk):
         self._level_was_available = False
         self._monitor_popup: tk.Toplevel | None = None
         self._ao_popup: tk.Toplevel | None = None
+        self._tc_popup: tk.Toplevel | None = None
         self._keypad_popup: tk.Toplevel | None = None
         self.valve_commands = [False, False, False]
         self.io_test_active = False
@@ -232,6 +233,13 @@ class FlowControlApp(tk.Tk):
         self._feedback_started_wall: datetime | None = None
         self._feedback_timer_started_at: float | None = None
         self._feedback_elapsed_s = 0.0
+        self.tc_running = False
+        self.tc_names = [f"TC {index}" for index in range(10)]
+        self.tc_offsets = [0.0] * 10
+        self.tc_name_vars: list[tk.StringVar] = []
+        self.tc_offset_vars: list[tk.StringVar] = []
+        self.tc_value_labels: list[ttk.Label] = []
+        self._last_tc_read_at = 0.0
 
         self._build_style()
         self._build_layout()
@@ -454,6 +462,12 @@ class FlowControlApp(tk.Tk):
         if not self.touch_mode:
             ttk.Button(
                 status,
+                text="TC MON",
+                style="Nav.TButton",
+                command=self.open_tc_popup,
+            ).pack(side="right", padx=(0, 6))
+            ttk.Button(
+                status,
                 text="유량계 TEST",
                 style="Nav.TButton",
                 command=self.open_monitor_popup,
@@ -643,6 +657,7 @@ class FlowControlApp(tk.Tk):
         actions = (
             ("유량 TEST", self.open_monitor_popup),
             ("I/O TEST", self.open_ao_popup),
+            ("TC MON", self.open_tc_popup),
             ("설정", self.open_settings),
         )
         for offset, (text, command) in enumerate(actions, start=3):
@@ -1407,6 +1422,218 @@ class FlowControlApp(tk.Tk):
                 self._monitor_popup.destroy()
             self._monitor_popup = None
 
+    def open_tc_popup(self) -> None:
+        """Open optional NI 9214 thermocouple monitoring."""
+        if self._tc_popup is not None and self._tc_popup.winfo_exists():
+            self._tc_popup.lift()
+            self._tc_popup.focus_force()
+            return
+
+        popup = tk.Toplevel(self)
+        self._tc_popup = popup
+        popup.title("TC MONITORING · NI 9214")
+        popup.configure(bg=COLORS["bg"])
+        popup.geometry("820x600")
+        popup.minsize(720, 520)
+
+        frame = ttk.Frame(popup, style="App.TFrame", padding=14)
+        frame.pack(fill="both", expand=True)
+
+        heading = ttk.Frame(frame, style="App.TFrame")
+        heading.pack(fill="x", pady=(0, 8))
+        ttk.Label(
+            heading, text="TC MONITORING · NI 9214", style="PanelTitle.TLabel"
+        ).pack(side="left")
+        self.tc_status_label = ttk.Label(
+            heading, text="NI 9214 연결 확인 중", style="ValueSmall.TLabel"
+        )
+        self.tc_status_label.pack(side="right")
+
+        ttk.Label(
+            frame,
+            text=(
+                "CH0~4: K TYPE  |  CH5~9: T TYPE  |  NI 9214 내장 CJC 냉접점 보상"
+                " + 채널별 보정값 적용"
+            ),
+            style="Hint.TLabel",
+        ).pack(anchor="w", pady=(0, 8))
+
+        channel_row = ttk.Frame(frame, style="App.TFrame")
+        channel_row.pack(fill="x", pady=(0, 8))
+        self.tc_k_channel_var = tk.StringVar(value=self.channels.tc_k_inputs)
+        self.tc_t_channel_var = tk.StringVar(value=self.channels.tc_t_inputs)
+        ttk.Label(channel_row, text="K 채널", style="Panel.TLabel").pack(side="left")
+        ttk.Entry(
+            channel_row, textvariable=self.tc_k_channel_var, width=24
+        ).pack(side="left", padx=(5, 12))
+        ttk.Label(channel_row, text="T 채널", style="Panel.TLabel").pack(side="left")
+        ttk.Entry(
+            channel_row, textvariable=self.tc_t_channel_var, width=24
+        ).pack(side="left", padx=(5, 0))
+
+        table = self.panel(frame)
+        table._card.pack(fill="both", expand=True)  # type: ignore[attr-defined]
+        for column, weight in enumerate((0, 0, 1, 0, 0)):
+            table.columnconfigure(column, weight=weight)
+        headings = ("채널", "TYPE", "온도 이름 (클릭 입력)", "보정 °C", "현재 온도")
+        for column, text in enumerate(headings):
+            ttk.Label(table, text=text, style="PanelTitle.TLabel").grid(
+                row=0, column=column, sticky="ew", padx=5, pady=(0, 6)
+            )
+
+        self.tc_name_vars = []
+        self.tc_offset_vars = []
+        self.tc_value_labels = []
+        for index in range(10):
+            tc_type = "K" if index < 5 else "T"
+            name_var = tk.StringVar(value=self.tc_names[index])
+            offset_var = tk.StringVar(value=f"{self.tc_offsets[index]:.2f}")
+            self.tc_name_vars.append(name_var)
+            self.tc_offset_vars.append(offset_var)
+
+            ttk.Label(
+                table, text=f"CH{index}", style="ValueSmall.TLabel"
+            ).grid(row=index + 1, column=0, padx=5, pady=3)
+            ttk.Label(
+                table, text=f"{tc_type} TYPE", style="Panel.TLabel"
+            ).grid(row=index + 1, column=1, padx=5, pady=3)
+            ttk.Entry(table, textvariable=name_var, width=28).grid(
+                row=index + 1, column=2, sticky="ew", padx=5, pady=3
+            )
+            offset_entry = ttk.Entry(
+                table, textvariable=offset_var, width=9, justify="center"
+            )
+            offset_entry.grid(row=index + 1, column=3, padx=5, pady=3)
+            if self.touch_mode:
+                offset_entry.bind(
+                    "<Button-1>",
+                    lambda _event, var=offset_var, channel=index: (
+                        self.open_numeric_keypad(
+                            var, f"TC CH{channel} 보정값 (°C)", -50.0, 50.0, 2
+                        ),
+                        "break",
+                    )[1],
+                )
+            value_label = ttk.Label(
+                table, text="— °C", style="ValueSmall.TLabel"
+            )
+            value_label.grid(row=index + 1, column=4, padx=8, pady=3, sticky="e")
+            self.tc_value_labels.append(value_label)
+
+        actions = ttk.Frame(frame, style="App.TFrame")
+        actions.pack(fill="x", pady=(10, 0))
+        ttk.Button(
+            actions,
+            text="이름 / 보정 저장",
+            style="TouchStart.TButton" if self.touch_mode else "Start.TButton",
+            command=self.save_tc_settings,
+        ).pack(side="left")
+        ttk.Button(actions, text="닫기", command=self._close_tc_popup).pack(
+            side="right"
+        )
+
+        self.tc_running = True
+        self._last_tc_read_at = 0.0
+        self._refresh_tc_status()
+        popup.protocol("WM_DELETE_WINDOW", self._close_tc_popup)
+
+    def _refresh_tc_status(self, error: str = "") -> None:
+        if getattr(self, "tc_status_label", None) is None:
+            return
+        if error:
+            text = f"TC 오류 · {error}"
+            color = COLORS["bad"]
+        elif self.daq.tc_available:
+            text = "NI 9214 연결됨 · 모니터링 중"
+            color = COLORS["ok"]
+        else:
+            text = "NI 9214 미연결 · 연결 대기"
+            color = COLORS["warn"]
+        self.tc_status_label.configure(text=text, foreground=color)
+
+    def _update_tc_monitor(self) -> None:
+        if not (
+            self.tc_running
+            and self._tc_popup is not None
+            and self._tc_popup.winfo_exists()
+        ):
+            return
+        now = time.monotonic()
+        if now - self._last_tc_read_at < 0.5:
+            return
+        self._last_tc_read_at = now
+        if not self.daq.tc_available:
+            self._refresh_tc_status()
+            for label in self.tc_value_labels:
+                label.configure(text="— °C", foreground=COLORS["muted"])
+            return
+        try:
+            values = self.daq.read_thermocouples()
+        except DaqError as exc:
+            self._refresh_tc_status(str(exc))
+            for label in self.tc_value_labels:
+                label.configure(text="ERR", foreground=COLORS["bad"])
+            return
+
+        for index, raw_value in enumerate(values):
+            try:
+                offset = float(self.tc_offset_vars[index].get().strip())
+            except ValueError:
+                offset = self.tc_offsets[index]
+            corrected = raw_value + offset
+            self.tc_value_labels[index].configure(
+                text=f"{corrected:.1f} °C", foreground=COLORS["title"]
+            )
+        self._refresh_tc_status()
+
+    def _sync_tc_inputs(self, show_error: bool = True) -> bool:
+        if not self.tc_name_vars:
+            return True
+        names: list[str] = []
+        offsets: list[float] = []
+        for index in range(10):
+            names.append(self.tc_name_vars[index].get().strip() or f"TC {index}")
+            try:
+                offset = float(self.tc_offset_vars[index].get().strip())
+            except ValueError:
+                if show_error:
+                    messagebox.showerror(
+                        "입력 오류", f"TC CH{index} 보정값은 숫자로 입력하세요."
+                    )
+                return False
+            if not -50.0 <= offset <= 50.0:
+                if show_error:
+                    messagebox.showerror(
+                        "범위 오류", f"TC CH{index} 보정값은 -50~50 °C 범위입니다."
+                    )
+                return False
+            offsets.append(offset)
+        self.tc_names = names
+        self.tc_offsets = offsets
+        if hasattr(self, "tc_k_channel_var"):
+            self.channels.tc_k_inputs = (
+                self.tc_k_channel_var.get().strip() or self.channels.tc_k_inputs
+            )
+            self.channels.tc_t_inputs = (
+                self.tc_t_channel_var.get().strip() or self.channels.tc_t_inputs
+            )
+        return True
+
+    def save_tc_settings(self) -> None:
+        if self._sync_tc_inputs():
+            self.save_settings()
+
+    def _close_tc_popup(self) -> None:
+        self._sync_tc_inputs(show_error=False)
+        self.tc_running = False
+        self.daq.close_thermocouples()
+        if self._tc_popup is not None and self._tc_popup.winfo_exists():
+            self._tc_popup.destroy()
+        self._tc_popup = None
+        self.tc_name_vars = []
+        self.tc_offset_vars = []
+        self.tc_value_labels = []
+
     def open_ao_popup(self) -> None:
         """Open manual REF.W(AO0) and valve DO0..DO2 test window."""
         if self._ao_popup is not None and self._ao_popup.winfo_exists():
@@ -2066,6 +2293,7 @@ class FlowControlApp(tk.Tk):
     # --------------------------------------------------------------- loops
     def refresh_connection(self) -> None:
         self.daq.check_connection()
+        self._refresh_tc_status()
         ao_ok = self.daq.available
         level_ok = self.daq.level_available
         if level_ok and not self._level_was_available:
@@ -2185,6 +2413,7 @@ class FlowControlApp(tk.Tk):
             if self.level_running:
                 self._update_levels()
             self._update_flame_status()
+            self._update_tc_monitor()
         except DaqError as exc:
             self._safe_stop(exc)
         except Exception as exc:  # noqa: BLE001
@@ -2523,6 +2752,7 @@ class FlowControlApp(tk.Tk):
 
     # ------------------------------------------------------------- settings
     def save_settings(self) -> None:
+        self._sync_tc_inputs(show_error=False)
         data = {
             "pulse_ml": self.fb_pulse_ml.get(),
             "sv": self.sv.get(),
@@ -2539,6 +2769,10 @@ class FlowControlApp(tk.Tk):
             "igniter_output": self.channels.igniter_output,
             "inverter_run": self.channels.inverter_run,
             "spare_do": self.channels.spare_do,
+            "tc_k_inputs": self.channels.tc_k_inputs,
+            "tc_t_inputs": self.channels.tc_t_inputs,
+            "tc_names": self.tc_names,
+            "tc_offsets": self.tc_offsets,
             "mp5y_port": self.mp5y_config.port,
             "mp5y_slave_id": self.mp5y_config.slave_id,
             "mp5y_baudrate": self.mp5y_config.baudrate,
@@ -2577,6 +2811,21 @@ class FlowControlApp(tk.Tk):
         self.channels.igniter_output = str(data.get("igniter_output", self.channels.igniter_output))
         self.channels.inverter_run = str(data.get("inverter_run", self.channels.inverter_run))
         self.channels.spare_do = str(data.get("spare_do", self.channels.spare_do))
+        self.channels.tc_k_inputs = str(
+            data.get("tc_k_inputs", self.channels.tc_k_inputs)
+        )
+        self.channels.tc_t_inputs = str(
+            data.get("tc_t_inputs", self.channels.tc_t_inputs)
+        )
+        tc_names = data.get("tc_names", self.tc_names)
+        if isinstance(tc_names, list) and len(tc_names) == 10:
+            self.tc_names = [str(name) for name in tc_names]
+        tc_offsets = data.get("tc_offsets", self.tc_offsets)
+        if isinstance(tc_offsets, list) and len(tc_offsets) == 10:
+            try:
+                self.tc_offsets = [float(offset) for offset in tc_offsets]
+            except (TypeError, ValueError):
+                self.tc_offsets = [0.0] * 10
         self.daq.channels = self.channels
         self._refresh_ng_ao_label()
         self.mp5y_config.port = str(data.get("mp5y_port", "COM3"))

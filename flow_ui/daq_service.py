@@ -5,6 +5,7 @@ Hardware (NI MAX):
   Slot 1  : NI 9264   -> cDAQ2Mod1  (REF.W ao0 + NG PUMP ao1 + spare ao2)
   Slot 2  : NI 9422   -> cDAQ2Mod2  (three HIGH/LOW level inputs, DI0..DI5)
   Slot 3  : NI 9477   -> cDAQ2Mod3  (valves DO0..2, igniter DO3, FX DO4, spare DO5)
+  Slot 4  : NI 9214   -> cDAQ2Mod4  (optional TC: K ai0..4, T ai5..9)
 
 LS iG5A wiring (NPN / sink):
   9264 ao0 (REF.W) -> V1,  9264 AO COM -> CM
@@ -24,6 +25,7 @@ CHASSIS = "cDAQ2"
 AO_MODULE = "cDAQ2Mod1"  # NI 9264
 DI_MODULE = "cDAQ2Mod2"  # NI 9422
 DO_MODULE = "cDAQ2Mod3"  # NI 9477
+TC_MODULE = "cDAQ2Mod4"  # optional NI 9214
 
 
 class DaqError(RuntimeError):
@@ -46,6 +48,8 @@ class ChannelConfig:
     # LS iG5A RUN: DO4 sinks P1(FX) to COM when ON (NPN mode).
     inverter_run: str = f"{DO_MODULE}/port0/line4"
     spare_do: str = f"{DO_MODULE}/port0/line5"
+    tc_k_inputs: str = f"{TC_MODULE}/ai0:4"
+    tc_t_inputs: str = f"{TC_MODULE}/ai5:9"
 
 
 class DaqService:
@@ -57,6 +61,7 @@ class DaqService:
         self.channels = channels or ChannelConfig()
         self.available = False
         self.level_available = False
+        self.tc_available = False
         self.error = "NI-DAQmx를 확인하는 중입니다."
         self.device_summary = "NI 9264 / 9422 / 9477 대기"
         self._nidaqmx = None
@@ -67,6 +72,8 @@ class DaqService:
         self._do_igniter_task = None
         self._do_inverter_task = None
         self._do_spare_task = None
+        self._tc_task = None
+        self._tc_channels: tuple[str, str] | None = None
         self._level_channel: str | None = None
         self._valve_channel: str | None = None
         self._flame_channel: str | None = None
@@ -88,6 +95,7 @@ class DaqService:
         if self._nidaqmx is None:
             self.available = False
             self.level_available = False
+            self.tc_available = False
             return False
         try:
             devices = {
@@ -97,6 +105,10 @@ class DaqService:
             found = sorted(devices)
             self.available = AO_MODULE in devices
             self.level_available = DI_MODULE in devices and DO_MODULE in devices
+            tc_device = self.channels.tc_k_inputs.split("/", 1)[0]
+            self.tc_available = tc_device in devices
+            if not self.tc_available:
+                self._close_tc_task()
             missing = [name for name in self.REQUIRED_DEVICES if name not in devices]
             if not missing:
                 self.error = "연결됨"
@@ -111,13 +123,66 @@ class DaqService:
                 f"9264 {'OK' if self.available else '없음'}",
                 f"9422 {'OK' if DI_MODULE in devices else '없음'}",
                 f"9477 {'OK' if DO_MODULE in devices else '없음'}",
+                f"9214({tc_device}) {'OK' if self.tc_available else '선택/없음'}",
             ]
             self.device_summary = " / ".join(states)
         except Exception as exc:  # noqa: BLE001 - keep UI alive on driver errors
             self.available = False
             self.level_available = False
+            self.tc_available = False
+            self._close_tc_task()
             self.error = f"통신 오류: {exc}"
         return self.available and self.level_available
+
+    def read_thermocouples(self) -> list[float]:
+        """Read optional NI 9214 channels: K ai0..4, T ai5..9 in °C.
+
+        DAQmx applies the NI 9214 built-in cold-junction compensation (CJC).
+        """
+        if not (self.tc_available and self._nidaqmx):
+            raise DaqError("NI 9214가 연결되지 않았습니다.")
+        channels = (self.channels.tc_k_inputs, self.channels.tc_t_inputs)
+        try:
+            if self._tc_task is not None and self._tc_channels != channels:
+                self._close_tc_task()
+            if self._tc_task is None:
+                from nidaqmx.constants import (  # type: ignore
+                    CJCSource,
+                    TemperatureUnits,
+                    ThermocoupleType,
+                )
+
+                task = self._nidaqmx.Task()
+                task.ai_channels.add_ai_thrmcpl_chan(
+                    self.channels.tc_k_inputs,
+                    min_val=-200.0,
+                    max_val=1200.0,
+                    units=TemperatureUnits.DEG_C,
+                    thermocouple_type=ThermocoupleType.K,
+                    cjc_source=CJCSource.BUILT_IN,
+                )
+                task.ai_channels.add_ai_thrmcpl_chan(
+                    self.channels.tc_t_inputs,
+                    min_val=-200.0,
+                    max_val=400.0,
+                    units=TemperatureUnits.DEG_C,
+                    thermocouple_type=ThermocoupleType.T,
+                    cjc_source=CJCSource.BUILT_IN,
+                )
+                self._tc_task = task
+                self._tc_channels = channels
+            values = self._tc_task.read()
+            if not isinstance(values, (list, tuple)):
+                values = [values]
+            result = [float(value) for value in values]
+            if len(result) != 10:
+                raise DaqError(f"TC 입력 개수 오류: {len(result)} (필요 10)")
+            return result
+        except Exception as exc:  # noqa: BLE001
+            self._close_tc_task()
+            if isinstance(exc, DaqError):
+                raise
+            raise DaqError(f"NI 9214 TC 읽기 오류: {exc}") from exc
 
     def read_levels(self) -> list[bool]:
         """Read [HIGH1, LOW1, HIGH2, LOW2, HIGH3, LOW3]."""
@@ -385,6 +450,20 @@ class DaqService:
             except Exception:  # noqa: BLE001
                 pass
 
+    def _close_tc_task(self) -> None:
+        task = self._tc_task
+        self._tc_task = None
+        self._tc_channels = None
+        if task is not None:
+            try:
+                task.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+    def close_thermocouples(self) -> None:
+        """Release the optional NI 9214 task without affecting other I/O."""
+        self._close_tc_task()
+
     def close(self) -> None:
         try:
             self.write_valves([False, False, False])
@@ -420,4 +499,5 @@ class DaqService:
         self._close_do_igniter_task()
         self._close_do_inverter_task()
         self._close_do_spare_task()
+        self._close_tc_task()
         self._close_ao_task()
