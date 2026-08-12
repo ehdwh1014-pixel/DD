@@ -10,11 +10,13 @@ VS Code / Python 데스크톱 UI로 **펄스 유량계 → MP5Y-25(유량 표시
 | PC 통신 | USB-RS485 | **COM3**, 9600 8N2, Addr 1 |
 | 펌프 AO | NI **9264** `cDAQ2Mod1/ao0` | **REF.W** 0~5 V → iG5A V1 |
 | NG 펌프 AO | NI **9264** `cDAQ2Mod1/ao1` | **NG PUMP** 수동 0~5 V |
+| 여유 AO | NI **9264** `cDAQ2Mod1/ao2` | **AO 2** 수동 0~5 V |
 | 레벨 DI | NI **9422** `cDAQ2Mod2/port0/line0:5` | HIGH/LOW × 3 |
 | 밸브 DO | NI **9477** `cDAQ2Mod3/port0/line0:2` | 싱킹 출력 × 3 |
 | 화염 DI | NI **9422** `cDAQ2Mod2/port0/line6` | IFW 15 NO 접점 |
 | 점화 SSR | NI **9477** `cDAQ2Mod3/port0/line3` | SSR 입력 수동 ON/OFF |
 | 인버터 RUN | NI **9477** `cDAQ2Mod3/port0/line4` | iG5A P1(FX)–CM |
+| 여유 DO | NI **9477** `cDAQ2Mod3/port0/line5` | **DO 5** 수동 ON/OFF |
 
 ## MP5Y 유량 표시 설정 (확정)
 
@@ -101,19 +103,20 @@ DO가 ON이면 White(SIG)가 0V로 당겨져 밸브에 **열림 명령**을 줍�
 
 ## I/O TEST 팝업
 
-- 메인 화면의 **I/O TEST**를 누르면 **REF.W(AO0)**와 밸브 DO0~2를 직접 시험할 수 있습니다.
+- 메인 화면의 **I/O TEST**를 누르면 **REF.W(AO0)**, 밸브 DO0~2, **AO 2**, **DO 5**를 직접 시험할 수 있습니다.
 - **NG PUMP(AO1)**는 메인 UI에서 상시 제어합니다. I/O TEST를 닫아도 NG PUMP 출력은 유지됩니다.
+- DO2는 V3 밸브가 사용 중이므로 여유 DO는 충돌하지 않는 DO5를 사용합니다.
 - 팝업을 여는 순간 피드백 운전은 정지하고 밸브는 모두 닫힙니다.
 - 팝업이 열린 동안 레벨센서 자동 밸브 제어는 일시 정지합니다.
 - `V1/V2/V3 열기·닫기`는 각각 DO0/DO1/DO2를 직접 출력합니다.
-- 팝업을 닫으면 REF.W(AO0)=0 V, DO0~2=OFF 후 레벨 자동제어로 복귀합니다.
+- 팝업을 닫으면 REF.W(AO0)·AO2=0 V, DO0~2·DO5=OFF 후 레벨 자동제어로 복귀합니다.
 - 화면의 **물 주입시간**은 `제어 시작`부터 정지/오류까지의 현재 운전 시간을 `시:분:초`로 표시합니다.
 
 ## 통신 장애 시 동작
 
 - **NI-DAQ 미연결:** AO/DO 제어와 피드백 운전을 시작할 수 없습니다.
 - **MP5Y/COM3 미연결:** 유량 PV가 필요한 피드백 운전만 정지합니다.
-- MP5Y가 끊겨도 NI-DAQ이 정상이면 레벨센서 자동 밸브 제어, 점화 DO, 메인 NG PUMP(AO1), I/O TEST의 REF.W(AO0)·DO0~2는 계속 사용할 수 있습니다.
+- MP5Y가 끊겨도 NI-DAQ이 정상이면 레벨센서 자동 밸브 제어, 점화 DO, 메인 NG PUMP(AO1), I/O TEST의 REF.W(AO0)·DO0~2·AO2·DO5는 계속 사용할 수 있습니다.
 - 상태 표시는 `COM3 미연결`, `COM3 연결 · 응답 없음`, `통신 ON`을 구분합니다. COM3 포트가 보인다는 사실만으로 MP5Y Modbus 응답까지 정상이라고 판단하지 않습니다.
 
 ## VS Code 설치 및 소스 실행 (Windows)

@@ -223,6 +223,8 @@ class FlowControlApp(tk.Tk):
         self.status_on = False
         self.current_ao = 0.0
         self.current_ng_ao = 0.0
+        self.current_spare_ao = 0.0
+        self.spare_do_on = False
         self.ng_ao_voltage = tk.StringVar(value="0.0")
         self.filtered_flow = 0.0
         self._last_loop_at: float | None = None
@@ -1411,11 +1413,15 @@ class FlowControlApp(tk.Tk):
 
         popup = tk.Toplevel(self)
         self._ao_popup = popup
-        popup.title("I/O 수동 TEST (REF.W AO0 + 밸브 DO0~2)")
+        popup.title("I/O 수동 TEST (REF.W/AO 2 + 밸브/DO 5)")
         popup.configure(bg=COLORS["bg"])
         self.io_test_active = True
         try:
             self.valve_commands = self.daq.write_valves([False, False, False])
+            self.current_spare_ao = self.daq.write_voltage(
+                0.0, self.channels.spare_ao
+            )
+            self.spare_do_on = self.daq.write_spare_do(False)
         except DaqError as exc:
             self.io_test_active = False
             popup.destroy()
@@ -1437,7 +1443,7 @@ class FlowControlApp(tk.Tk):
         )
         ttk.Label(
             frame,
-            text="TEST 중 레벨 자동제어는 일시 정지됩니다. 창을 닫으면 REF.W(AO0)=0 V, DO0~2=OFF 후 자동제어로 복귀합니다. NG PUMP(AO1)는 메인 화면에서 유지됩니다.",
+            text="TEST 중 레벨 자동제어는 일시 정지됩니다. 창을 닫으면 REF.W(AO0), AO 2, DO0~2, DO 5가 OFF되고 자동제어로 복귀합니다. NG PUMP(AO1)는 메인 화면에서 유지됩니다.",
             style="Hint.TLabel",
             wraplength=w - 60,
         ).pack(anchor="w", pady=(0, 10))
@@ -1488,6 +1494,49 @@ class FlowControlApp(tk.Tk):
         ]
         self.test_ao_value_labels[0].pack(anchor="w", pady=(16, 0))
 
+        ttk.Separator(controls, orient="horizontal").pack(fill="x", pady=(18, 12))
+        ttk.Label(controls, text="AO 2", style="PanelTitle.TLabel").pack(anchor="w")
+        ttk.Label(controls, text=self.channels.spare_ao, style="Hint.TLabel").pack(
+            anchor="w", pady=(2, 8)
+        )
+        self.spare_ao_voltage = tk.StringVar(value="0.0")
+        spare_ao_entry = ttk.Entry(
+            controls,
+            textvariable=self.spare_ao_voltage,
+            style="Highlight.TEntry",
+            justify="center",
+        )
+        spare_ao_entry.pack(fill="x")
+        if self.touch_mode:
+            spare_ao_entry.bind(
+                "<Button-1>",
+                lambda _event: (
+                    self.open_numeric_keypad(
+                        self.spare_ao_voltage, "AO 2 출력 (V)", 0.0, 5.0, 3
+                    ),
+                    "break",
+                )[1],
+            )
+        spare_ao_buttons = ttk.Frame(controls, style="Panel.TFrame")
+        spare_ao_buttons.pack(fill="x", pady=(8, 0))
+        spare_ao_buttons.columnconfigure((0, 1), weight=1)
+        ttk.Button(
+            spare_ao_buttons,
+            text="출력",
+            style="Start.TButton",
+            command=self.output_spare_ao,
+        ).grid(row=0, column=0, sticky="ew", padx=(0, 3))
+        ttk.Button(
+            spare_ao_buttons,
+            text="0 V",
+            style="Stop.TButton",
+            command=self.zero_spare_ao,
+        ).grid(row=0, column=1, sticky="ew", padx=(3, 0))
+        self.spare_ao_value_label = ttk.Label(
+            controls, text="AO 2: 0.000 V", style="ValueSmall.TLabel"
+        )
+        self.spare_ao_value_label.pack(anchor="w", pady=(7, 0))
+
         valves = self.panel(body)
         self.place_panel(valves, row=0, column=1, sticky="nsew")
         ttk.Label(valves, text="전동볼밸브 DO", style="PanelTitle.TLabel").pack(anchor="w")
@@ -1520,6 +1569,33 @@ class FlowControlApp(tk.Tk):
             ).grid(row=0, column=1, sticky="ew", padx=(3, 0))
             self.test_valve_labels.append(status)
 
+        ttk.Separator(valves, orient="horizontal").pack(fill="x", pady=(12, 10))
+        spare_do_row = ttk.Frame(valves, style="Panel.TFrame")
+        spare_do_row.pack(fill="x")
+        ttk.Label(spare_do_row, text="DO 5", style="PanelTitle.TLabel").pack(side="left")
+        self.spare_do_status = ttk.Label(
+            spare_do_row, text="OFF", style="ValueSmall.TLabel"
+        )
+        self.spare_do_status.pack(side="right")
+        ttk.Label(valves, text=self.channels.spare_do, style="Hint.TLabel").pack(
+            anchor="w", pady=(2, 7)
+        )
+        spare_do_buttons = ttk.Frame(valves, style="Panel.TFrame")
+        spare_do_buttons.pack(fill="x")
+        spare_do_buttons.columnconfigure((0, 1), weight=1)
+        ttk.Button(
+            spare_do_buttons,
+            text="ON",
+            style="Start.TButton",
+            command=lambda: self.set_spare_do(True),
+        ).grid(row=0, column=0, sticky="ew", padx=(0, 3))
+        ttk.Button(
+            spare_do_buttons,
+            text="OFF",
+            style="Stop.TButton",
+            command=lambda: self.set_spare_do(False),
+        ).grid(row=0, column=1, sticky="ew", padx=(3, 0))
+
         popup.protocol("WM_DELETE_WINDOW", self._close_ao_popup)
 
     def _close_ao_popup(self) -> None:
@@ -1527,11 +1603,24 @@ class FlowControlApp(tk.Tk):
             # Clear only TEST outputs. NG PUMP(AO1) stays under main-UI control.
             try:
                 self.daq.write_voltage(0.0)
+            except DaqError:
+                pass
+            try:
+                self.daq.write_voltage(0.0, self.channels.spare_ao)
+            except DaqError:
+                pass
+            try:
                 self.valve_commands = self.daq.write_valves([False, False, False])
+            except DaqError:
+                pass
+            try:
+                self.daq.write_spare_do(False)
             except DaqError:
                 pass
         finally:
             self.current_ao = 0.0
+            self.current_spare_ao = 0.0
+            self.spare_do_on = False
             self.io_test_active = False
             if getattr(self, "output_value", None) is not None:
                 self.output_value.configure(text=f"REF.W: {self.current_ao:.3f} V")
@@ -1791,6 +1880,39 @@ class FlowControlApp(tk.Tk):
             return
         self.ao_voltage.set("0.0")
         self.output_test_ao(0)
+
+    def output_spare_ao(self) -> None:
+        voltage = self.number(self.spare_ao_voltage, "AO 2 출력 전압")
+        if voltage is None:
+            return
+        if not 0.0 <= voltage <= 5.0:
+            messagebox.showerror("범위 오류", "AO 2 출력은 0.0 ~ 5.0 V여야 합니다.")
+            return
+        try:
+            self.current_spare_ao = self.daq.write_voltage(
+                voltage, self.channels.spare_ao
+            )
+        except DaqError as exc:
+            self._show_hardware_error(exc)
+            return
+        self.spare_ao_value_label.configure(
+            text=f"AO 2: {self.current_spare_ao:.3f} V"
+        )
+
+    def zero_spare_ao(self) -> None:
+        self.spare_ao_voltage.set("0.0")
+        self.output_spare_ao()
+
+    def set_spare_do(self, on: bool) -> None:
+        try:
+            self.spare_do_on = self.daq.write_spare_do(on)
+        except DaqError as exc:
+            self._show_hardware_error(exc)
+            return
+        self.spare_do_status.configure(
+            text="ON" if self.spare_do_on else "OFF",
+            foreground=COLORS["ok"] if self.spare_do_on else COLORS["accent_deep"],
+        )
 
     def apply_ng_ao(self) -> None:
         """Apply NG PUMP AO1 voltage from the main UI."""
@@ -2117,6 +2239,12 @@ class FlowControlApp(tk.Tk):
         except DaqError as exc:
             stop_error += f" / NG PUMP 0 V 실패: {exc}"
         try:
+            self.current_spare_ao = self.daq.write_voltage(
+                0.0, self.channels.spare_ao
+            )
+        except DaqError as exc:
+            stop_error += f" / AO 2 0 V 실패: {exc}"
+        try:
             self.valve_commands = self.daq.write_valves([False, False, False])
         except DaqError as exc:
             stop_error += f" / 밸브 닫힘 실패: {exc}"
@@ -2128,6 +2256,10 @@ class FlowControlApp(tk.Tk):
             self.daq.write_inverter_run(False)
         except DaqError as exc:
             stop_error += f" / 인버터 RUN OFF 실패: {exc}"
+        try:
+            self.spare_do_on = self.daq.write_spare_do(False)
+        except DaqError as exc:
+            stop_error += f" / DO 5 OFF 실패: {exc}"
         self.mp5y.close()
         self.monitor_button.configure(text="측정 시작", style="Start.TButton")
         self.feedback_button.configure(
@@ -2379,12 +2511,14 @@ class FlowControlApp(tk.Tk):
             "lpf_cutoff": self.lpf_cutoff.get(),
             "ao_pump": self.channels.ao_pump,
             "ao_ng_pump": self.channels.ao_ng_pump,
+            "spare_ao": self.channels.spare_ao,
             "ng_ao_voltage": self.ng_ao_voltage.get(),
             "level_inputs": self.channels.level_inputs,
             "valve_outputs": self.channels.valve_outputs,
             "flame_input": self.channels.flame_input,
             "igniter_output": self.channels.igniter_output,
             "inverter_run": self.channels.inverter_run,
+            "spare_do": self.channels.spare_do,
             "mp5y_port": self.mp5y_config.port,
             "mp5y_slave_id": self.mp5y_config.slave_id,
             "mp5y_baudrate": self.mp5y_config.baudrate,
@@ -2415,12 +2549,14 @@ class FlowControlApp(tk.Tk):
         self.channels.ao_ng_pump = str(
             data.get("ao_ng_pump", self.channels.ao_ng_pump)
         )
+        self.channels.spare_ao = str(data.get("spare_ao", self.channels.spare_ao))
         self.ng_ao_voltage.set(str(data.get("ng_ao_voltage", self.ng_ao_voltage.get())))
         self.channels.level_inputs = str(data.get("level_inputs", self.channels.level_inputs))
         self.channels.valve_outputs = str(data.get("valve_outputs", self.channels.valve_outputs))
         self.channels.flame_input = str(data.get("flame_input", self.channels.flame_input))
         self.channels.igniter_output = str(data.get("igniter_output", self.channels.igniter_output))
         self.channels.inverter_run = str(data.get("inverter_run", self.channels.inverter_run))
+        self.channels.spare_do = str(data.get("spare_do", self.channels.spare_do))
         self.daq.channels = self.channels
         self._refresh_ng_ao_label()
         self.mp5y_config.port = str(data.get("mp5y_port", "COM3"))

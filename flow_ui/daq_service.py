@@ -2,9 +2,9 @@
 
 Hardware (NI MAX):
   Chassis : cDAQ-9178 -> cDAQ2
-  Slot 1  : NI 9264   -> cDAQ2Mod1  (REF.W ao0 + NG PUMP ao1, 0~5 V)
+  Slot 1  : NI 9264   -> cDAQ2Mod1  (REF.W ao0 + NG PUMP ao1 + spare ao2)
   Slot 2  : NI 9422   -> cDAQ2Mod2  (three HIGH/LOW level inputs, DI0..DI5)
-  Slot 3  : NI 9477   -> cDAQ2Mod3  (valves DO0..2, igniter DO3, inverter FX DO4)
+  Slot 3  : NI 9477   -> cDAQ2Mod3  (valves DO0..2, igniter DO3, FX DO4, spare DO5)
 
 LS iG5A wiring (NPN / sink):
   9264 ao0 (REF.W) -> V1,  9264 AO COM -> CM
@@ -36,6 +36,7 @@ class ChannelConfig:
 
     ao_pump: str = f"{AO_MODULE}/ao0"
     ao_ng_pump: str = f"{AO_MODULE}/ao1"
+    spare_ao: str = f"{AO_MODULE}/ao2"
     level_inputs: str = f"{DI_MODULE}/port0/line0:5"
     valve_outputs: str = f"{DO_MODULE}/port0/line0:2"
     # IFW15 flame detector (potential-free contacts) -> NI 9422 DI6 (line6).
@@ -44,6 +45,7 @@ class ChannelConfig:
     igniter_output: str = f"{DO_MODULE}/port0/line3"
     # LS iG5A RUN: DO4 sinks P1(FX) to COM when ON (NPN mode).
     inverter_run: str = f"{DO_MODULE}/port0/line4"
+    spare_do: str = f"{DO_MODULE}/port0/line5"
 
 
 class DaqService:
@@ -64,14 +66,17 @@ class DaqService:
         self._di_flame_task = None
         self._do_igniter_task = None
         self._do_inverter_task = None
+        self._do_spare_task = None
         self._level_channel: str | None = None
         self._valve_channel: str | None = None
         self._flame_channel: str | None = None
         self._igniter_channel: str | None = None
         self._inverter_channel: str | None = None
+        self._spare_do_channel: str | None = None
         self._last_valves = [False, False, False]
         self._last_igniter = False
         self._last_inverter = False
+        self._last_spare_do = False
         try:
             import nidaqmx  # type: ignore
 
@@ -261,6 +266,35 @@ class DaqService:
             self._close_do_inverter_task()
             raise DaqError(f"인버터 RUN(DO4) 출력 오류: {exc}") from exc
 
+    def write_spare_do(self, on: bool) -> bool:
+        """Write the spare NI 9477 sinking output (default DO5)."""
+        on = bool(on)
+        if not (self.level_available and self._nidaqmx):
+            self._last_spare_do = on
+            return on
+        try:
+            if (
+                self._do_spare_task is not None
+                and self._spare_do_channel != self.channels.spare_do
+            ):
+                self._close_do_spare_task()
+            if self._do_spare_task is None:
+                from nidaqmx.constants import LineGrouping  # type: ignore
+
+                task = self._nidaqmx.Task()
+                task.do_channels.add_do_chan(
+                    self.channels.spare_do,
+                    line_grouping=LineGrouping.CHAN_PER_LINE,
+                )
+                self._do_spare_task = task
+                self._spare_do_channel = self.channels.spare_do
+            self._do_spare_task.write([on], auto_start=True)
+            self._last_spare_do = on
+            return on
+        except Exception as exc:  # noqa: BLE001
+            self._close_do_spare_task()
+            raise DaqError(f"DO 5 출력 오류: {exc}") from exc
+
     def write_voltage(self, voltage: float, channel: str | None = None) -> float:
         voltage = max(0.0, min(5.0, float(voltage)))
         channel = channel or self.channels.ao_pump
@@ -341,6 +375,16 @@ class DaqService:
             except Exception:  # noqa: BLE001
                 pass
 
+    def _close_do_spare_task(self) -> None:
+        task = self._do_spare_task
+        self._do_spare_task = None
+        self._spare_do_channel = None
+        if task is not None:
+            try:
+                task.close()
+            except Exception:  # noqa: BLE001
+                pass
+
     def close(self) -> None:
         try:
             self.write_valves([False, False, False])
@@ -355,6 +399,10 @@ class DaqService:
         except DaqError:
             pass
         try:
+            self.write_spare_do(False)
+        except DaqError:
+            pass
+        try:
             self.write_voltage(0.0)
         except DaqError:
             pass
@@ -362,9 +410,14 @@ class DaqService:
             self.write_voltage(0.0, self.channels.ao_ng_pump)
         except DaqError:
             pass
+        try:
+            self.write_voltage(0.0, self.channels.spare_ao)
+        except DaqError:
+            pass
         self._close_di_task()
         self._close_do_task()
         self._close_di_flame_task()
         self._close_do_igniter_task()
         self._close_do_inverter_task()
+        self._close_do_spare_task()
         self._close_ao_task()
