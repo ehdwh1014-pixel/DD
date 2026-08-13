@@ -29,7 +29,7 @@ from flow_ui.control import LowPassFilter, PIController
 from flow_ui.daq_service import ChannelConfig, DaqError, DaqService
 from flow_ui.flow_math import DEFAULT_PULSE_ML
 from flow_ui.level_control import ValveRole, decide_valve
-from flow_ui.mp5y_service import MODE_NAMES, Mp5yConfig, Mp5yError, Mp5yService
+from flow_ui.mp5y_service import Mp5yConfig, Mp5yError, Mp5yService
 
 
 # Professional instrumentation palette: white, navy, teal, and amber.
@@ -539,58 +539,6 @@ class FlowControlApp(tk.Tk):
                 row=row + 1, column=0, columnspan=2, sticky="w", pady=(0, 2)
             )
         return value
-
-    def _create_monitor_page(self) -> ttk.Frame:
-        page = ttk.Frame(self.content, style="App.TFrame")
-        page.columnconfigure(1, weight=1)
-        page.rowconfigure(0, weight=1)
-
-        controls = self.panel(page)
-        self.place_panel(controls, row=0, column=0, sticky="nsw", padx=(0, 14))
-        ttk.Label(controls, text="유량 모니터", style="PanelTitle.TLabel").grid(
-            row=0, column=0, columnspan=2, sticky="w", pady=(0, 14)
-        )
-        self.pulse_ml = self.field(controls, 1, "펄스정수 (ml/P)", "0.46")
-        self.decimal_places = self.field(
-            controls, 3, "소수점 자리", "auto", "auto 또는 0~4 (MP5Y 화면과 값이 다를 때)"
-        )
-        self.mon_flow = ttk.Label(controls, text="0.0 cc/min", style="Value.TLabel")
-        self.mon_flow.grid(row=5, column=0, columnspan=2, sticky="w", pady=(18, 4))
-        self.mon_hz = ttk.Label(controls, text="MP5Y 표시: 0.00 cc/min", style="ValueSmall.TLabel")
-        self.mon_hz.grid(row=6, column=0, columnspan=2, sticky="w")
-        self.mon_conv = ttk.Label(
-            controls, text="환산: MP5Y 프리스케일 27.6 사용 (이중환산 없음)", style="Panel.TLabel"
-        )
-        self.mon_conv.grid(row=7, column=0, columnspan=2, sticky="w", pady=(4, 0))
-        self.mon_raw = ttk.Label(controls, text="MP5Y raw: 0", style="Panel.TLabel")
-        self.mon_raw.grid(row=8, column=0, columnspan=2, sticky="w", pady=(6, 0))
-        self.mon_mode = ttk.Label(controls, text="모드: -", style="Panel.TLabel")
-        self.mon_mode.grid(row=9, column=0, columnspan=2, sticky="w", pady=(4, 0))
-        self.monitor_button = ttk.Button(
-            controls, text="측정 시작", style="Start.TButton", command=self.toggle_monitor
-        )
-        self.monitor_button.grid(row=10, column=0, columnspan=2, sticky="ew", pady=(22, 0))
-        ttk.Label(
-            controls,
-            text="MP5Y 화면(cc/min)을 그대로 PV로 사용\nin-A=PnP, 프리스케일 27.6",
-            style="Hint.TLabel",
-            wraplength=250,
-            justify="left",
-        ).grid(row=11, column=0, columnspan=2, sticky="w", pady=(12, 0))
-
-        graphs = ttk.Frame(page, style="App.TFrame")
-        graphs.grid(row=0, column=1, sticky="nsew")
-        graphs.rowconfigure((0, 1), weight=1)
-        graphs.columnconfigure(0, weight=1)
-        self.mon_flow_graph = TrendGraph(
-            graphs, "유량 추이", [("Flow", COLORS["pv"])], 0, 200, "cc/min"
-        )
-        self.mon_flow_graph.grid(row=0, column=0, sticky="nsew", pady=(0, 8))
-        self.mon_hz_graph = TrendGraph(
-            graphs, "추정 주파수", [("Hz", COLORS["hz"])], 0, 20, "Hz"
-        )
-        self.mon_hz_graph.grid(row=1, column=0, sticky="nsew")
-        return page
 
     def _create_ao_page(self) -> ttk.Frame:
         page = ttk.Frame(self.content, style="App.TFrame")
@@ -1358,96 +1306,6 @@ class FlowControlApp(tk.Tk):
         self.pages[page].pack(fill="both", expand=True)
 
     # ---------------------------------------------------------- popup UI
-    def open_monitor_popup(self) -> None:
-        """Open MP5Y -> 유량 테스트 window."""
-        # If already open, bring to front.
-        if self._monitor_popup is not None and self._monitor_popup.winfo_exists():
-            self._monitor_popup.lift()
-            self._monitor_popup.focus_force()
-            return
-
-        popup = tk.Toplevel(self)
-        self._monitor_popup = popup
-        popup.title("유량계 TEST (MP5Y)")
-        popup.configure(bg=COLORS["bg"])
-        # Small-screen safe sizing
-        screen_w = max(self.winfo_screenwidth(), 1024)
-        screen_h = max(self.winfo_screenheight(), 700)
-        w = min(980, int(screen_w * 0.7))
-        h = min(680, int(screen_h * 0.7))
-        popup.geometry(f"{w}x{h}")
-
-        frame = ttk.Frame(popup, style="App.TFrame", padding=16)
-        frame.pack(fill="both", expand=True)
-
-        ttk.Label(frame, text="유량계 TEST", style="PanelTitle.TLabel").pack(anchor="w", pady=(0, 10))
-
-        body = ttk.Frame(frame, style="App.TFrame")
-        body.pack(fill="both", expand=True)
-        body.columnconfigure(1, weight=1)
-        body.rowconfigure(0, weight=1)
-
-        controls = self.panel(body)
-        self.place_panel(controls, row=0, column=0, sticky="nsw", padx=(0, 14))
-
-        # Controls (pulse constant only affects UI if you later switch modes)
-        self.pulse_ml = self.field(controls, 1, "펄스정수 (ml/P)", "0.46")
-        self.decimal_places = self.field(
-            controls, 3, "소수점 자리", "auto", "auto 또는 0~4 (MP5Y 값과 다르면)"
-        )
-
-        self.mon_flow = ttk.Label(controls, text="0.0 cc/min", style="Value.TLabel")
-        self.mon_flow.grid(row=5, column=0, columnspan=2, sticky="w", pady=(18, 4))
-
-        self.mon_hz = ttk.Label(controls, text="MP5Y 표시: 0.00 cc/min", style="ValueSmall.TLabel")
-        self.mon_hz.grid(row=6, column=0, columnspan=2, sticky="w")
-
-        self.mon_conv = ttk.Label(
-            controls,
-            text="환산: MP5Y 프리스케일 27.6 사용 (이중환산 없음)",
-            style="Panel.TLabel",
-        )
-        self.mon_conv.grid(row=7, column=0, columnspan=2, sticky="w", pady=(4, 0))
-
-        self.mon_raw = ttk.Label(controls, text="MP5Y raw: 0", style="Panel.TLabel")
-        self.mon_raw.grid(row=8, column=0, columnspan=2, sticky="w", pady=(6, 0))
-
-        self.mon_mode = ttk.Label(controls, text="모드: -", style="Panel.TLabel")
-        self.mon_mode.grid(row=9, column=0, columnspan=2, sticky="w", pady=(4, 0))
-
-        self.monitor_button = ttk.Button(
-            controls, text="측정 시작", style="Start.TButton", command=self.toggle_monitor
-        )
-        self.monitor_button.grid(row=10, column=0, columnspan=2, sticky="ew", pady=(22, 0))
-
-        ttk.Label(
-            controls,
-            text="유량계 → MP5Y(통신) → PV(cc/min) 표시\n"
-            "※ 자동 제어와 별개입니다.",
-            style="Hint.TLabel",
-            wraplength=250,
-            justify="left",
-        ).grid(row=11, column=0, columnspan=2, sticky="w", pady=(12, 0))
-
-        graphs = ttk.Frame(body, style="App.TFrame")
-        graphs.grid(row=0, column=1, sticky="nsew")
-        graphs.rowconfigure(0, weight=1)
-        graphs.columnconfigure(0, weight=1)
-
-        self.mon_flow_graph = TrendGraph(graphs, "유량 추이", [("Flow", COLORS["pv"])], 0, 200, "cc/min")
-        self.mon_flow_graph.grid(row=0, column=0, sticky="nsew")
-
-        popup.protocol("WM_DELETE_WINDOW", self._close_monitor_popup)
-
-    def _close_monitor_popup(self) -> None:
-        try:
-            if self.monitor_running:
-                self.toggle_monitor()
-        finally:
-            if self._monitor_popup is not None and self._monitor_popup.winfo_exists():
-                self._monitor_popup.destroy()
-            self._monitor_popup = None
-
     def open_tc_popup(self) -> None:
         """Open optional NI 9214 thermocouple monitoring."""
         if self._tc_popup is not None and self._tc_popup.winfo_exists():
@@ -2056,32 +1914,6 @@ class FlowControlApp(tk.Tk):
         self.ao_value.configure(text=f"현재 출력: {self.current_ao:.3f} V")
         self.ao_graph.add(self.current_ao)
 
-    def output_test_ao(self, index: int) -> None:
-        """Apply REF.W(AO0) test voltage from the I/O TEST popup."""
-        if index != 0:
-            return
-        voltage = self.number(self.ao_voltage, "REF.W 출력 전압")
-        if voltage is None:
-            return
-        if not 0.0 <= voltage <= 5.0:
-            messagebox.showerror("범위 오류", "AO 출력은 0.0 ~ 5.0 V여야 합니다.")
-            return
-        try:
-            actual = self.daq.write_voltage(voltage, self.channels.ao_pump)
-        except DaqError as exc:
-            self._show_hardware_error(exc)
-            return
-        self.current_ao = actual
-        self.test_ao_value_labels[0].configure(text=f"현재 출력: {actual:.3f} V")
-        if getattr(self, "output_value", None) is not None:
-            self.output_value.configure(text=f"REF.W: {actual:.3f} V")
-
-    def zero_test_ao(self, index: int) -> None:
-        if index != 0:
-            return
-        self.ao_voltage.set("0.0")
-        self.output_test_ao(0)
-
     def output_spare_ao(self) -> None:
         voltage = self.number(self.spare_ao_voltage, "AO 2 출력 전압")
         if voltage is None:
@@ -2144,20 +1976,6 @@ class FlowControlApp(tk.Tk):
             self.ng_ao_value.configure(
                 text=f"NG PUMP: {self.current_ng_ao:.3f} V"
             )
-
-    def set_test_valve(self, index: int, opened: bool) -> None:
-        """Directly command one valve while the I/O test popup owns DO0..DO2."""
-        commands = list(self.valve_commands)
-        commands[index] = bool(opened)
-        try:
-            self.valve_commands = self.daq.write_valves(commands)
-        except DaqError as exc:
-            self._show_hardware_error(exc)
-            return
-        self.test_valve_labels[index].configure(
-            text="열림" if opened else "닫힘",
-            foreground=COLORS["ok"] if opened else COLORS["accent_deep"],
-        )
 
     def validate_feedback(self) -> bool:
         for var, label in (
@@ -2639,34 +2457,6 @@ class FlowControlApp(tk.Tk):
             if self.daq.available:
                 raise
             return self.mp5y.simulate_flow(pulse_ml=pulse_ml)
-
-    def _update_monitor(self) -> None:
-        pulse_ml = self.number_silent(self.pulse_ml, DEFAULT_PULSE_ML)
-        raw_flow, hz, raw, dot = self._read_mp5y(pulse_ml)
-        now = time.monotonic()
-        dt = max(now - (self._last_loop_at or now), 0.001)
-        self._last_loop_at = now
-        flow = self.lpf.update(raw_flow, dt, 1.0)
-        self.filtered_flow = flow
-        hz_text = "—" if math.isnan(hz) else f"{hz:.2f}"
-        mode_name = MODE_NAMES.get(self.mp5y.last_mode, f"mode={self.mp5y.last_mode}")
-        r0, r1, r2 = self.mp5y.last_regs
-        self.mon_flow.configure(text=f"{flow:.1f} cc/min")
-        if self.mp5y_config.value_mode == "flow_ccpm":
-            self.mon_hz.configure(text=f"MP5Y 표시: {raw_flow:.2f} cc/min")
-            self.mon_conv.configure(
-                text=f"추정 Hz: {hz_text}  (표시÷27.6) · 이중환산 없음"
-            )
-        else:
-            self.mon_hz.configure(text=f"MP5Y 표시: {hz_text} Hz")
-            self.mon_conv.configure(
-                text=f"환산: {hz_text} × {pulse_ml:.2f} × 60 = {raw_flow:.1f} cc/min"
-            )
-        self.mon_raw.configure(text=f"raw:{raw} DOT={dot} regs=[{r0},{r1},{r2}]")
-        self.mon_mode.configure(text=f"모드: {mode_name}")
-        self.mon_flow_graph.set_scale(0, max(200.0, flow * 1.4 + 20), "cc/min")
-        self.mon_flow_graph.add(flow)
-        self.mon_hz_graph.add(0.0 if math.isnan(hz) else hz)
 
     def _update_feedback(self) -> None:
         pulse_ml = self.number_silent(self.fb_pulse_ml, DEFAULT_PULSE_ML)
