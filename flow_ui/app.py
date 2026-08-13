@@ -239,6 +239,11 @@ class FlowControlApp(tk.Tk):
         self.tc_names = [f"TC {index}" for index in range(10)]
         self.tc_name_vars: list[tk.StringVar] = []
         self.tc_value_labels: list[ttk.Label] = []
+        self.valve_names = ["급수", "배수", "배수"]
+        self.valve_name_vars = [
+            tk.StringVar(value=name) for name in self.valve_names
+        ]
+        self.valve_do_labels: list[ttk.Label] = []
         self._last_tc_read_at = 0.0
         self._tc_worker_busy = False
         self._tc_pending_values: list[float] | None = None
@@ -823,12 +828,13 @@ class FlowControlApp(tk.Tk):
         self.level_low_labels = []
         self.valve_status_labels = []
         self.level_logic_labels = []
-        definitions = (
-            ("밸브 1 · 급수", "LOW → 열림  /  HIGH → 닫힘"),
-            ("밸브 2 · 배수", "LOW → 닫힘  /  HIGH → 열림"),
-            ("밸브 3 · 배수", "LOW → 닫힘  /  HIGH → 열림"),
+        self.valve_do_labels = []
+        rules = (
+            "LOW → 열림  /  HIGH → 닫힘",
+            "LOW → 닫힘  /  HIGH → 열림",
+            "LOW → 닫힘  /  HIGH → 열림",
         )
-        for index, (name, rule) in enumerate(definitions):
+        for index, rule in enumerate(rules):
             card = self.panel(section)
             self.place_panel(
                 card,
@@ -837,8 +843,24 @@ class FlowControlApp(tk.Tk):
                 sticky="nsew",
                 padx=(0 if index == 0 else 5, 0),
             )
-            ttk.Label(card, text=name, style="PanelTitle.TLabel").pack(anchor="w")
-            ttk.Label(card, text=rule, style="Hint.TLabel").pack(anchor="w", pady=(2, 14))
+            head = ttk.Frame(card, style="Panel.TFrame")
+            head.pack(fill="x")
+            do_label = ttk.Label(
+                head, text=f"DO{index}", style="PanelTitle.TLabel"
+            )
+            do_label.pack(side="left")
+            self.valve_do_labels.append(do_label)
+            name_entry = ttk.Entry(
+                card, textvariable=self.valve_name_vars[index], width=12
+            )
+            name_entry.pack(fill="x", pady=(6, 0))
+            name_entry.bind(
+                "<Return>",
+                lambda _event, i=index: self._commit_valve_name(i),
+            )
+            ttk.Label(card, text=rule, style="Hint.TLabel").pack(
+                anchor="w", pady=(2, 14)
+            )
             high = ttk.Label(card, text="●  HIGH   OFF", style="ValueSmall.TLabel")
             high.pack(anchor="w", pady=5)
             low = ttk.Label(card, text="●  LOW    OFF", style="ValueSmall.TLabel")
@@ -852,6 +874,12 @@ class FlowControlApp(tk.Tk):
             self.level_low_labels.append(low)
             self.valve_status_labels.append(valve)
             self.level_logic_labels.append(logic)
+        ttk.Button(
+            section,
+            text="밸브 이름 저장",
+            style="Touch.TButton",
+            command=self.save_valve_names,
+        ).grid(row=2, column=0, columnspan=3, sticky="ew", pady=(8, 0))
         return section
 
     def _create_touch_flame_section(self, parent: tk.Misc) -> ttk.Frame:
@@ -1085,12 +1113,13 @@ class FlowControlApp(tk.Tk):
         self.level_low_labels = []
         self.valve_status_labels = []
         self.level_logic_labels = []
-        definitions = (
-            ("V1 급수", "L열림 / H닫힘"),
-            ("V2 배수", "L닫힘 / H열림"),
-            ("V3 배수", "L닫힘 / H열림"),
+        self.valve_do_labels = []
+        rules = (
+            "L열림 / H닫힘",
+            "L닫힘 / H열림",
+            "L닫힘 / H열림",
         )
-        for index, (name, rule) in enumerate(definitions):
+        for index, rule in enumerate(rules):
             wrap = tk.Frame(cards, bg=COLORS["border"], padx=1, pady=1)
             wrap.grid(
                 row=0,
@@ -1102,10 +1131,24 @@ class FlowControlApp(tk.Tk):
             card.pack(fill="both", expand=True)
             head = ttk.Frame(card, style="Panel.TFrame")
             head.pack(fill="x")
-            ttk.Label(head, text=name, style="PanelTitle.TLabel").pack(side="left")
+            do_label = ttk.Label(
+                head, text=f"DO{index}", style="PanelTitle.TLabel"
+            )
+            do_label.pack(side="left")
+            self.valve_do_labels.append(do_label)
             valve = ttk.Label(head, text="닫힘", style="ValueSmall.TLabel")
             valve.pack(side="right")
-            ttk.Label(card, text=rule, style="Hint.TLabel").pack(anchor="w", pady=(6, 0))
+            name_entry = ttk.Entry(
+                card, textvariable=self.valve_name_vars[index], width=14
+            )
+            name_entry.pack(fill="x", pady=(6, 0))
+            name_entry.bind(
+                "<Return>",
+                lambda _event, i=index: self._commit_valve_name(i),
+            )
+            ttk.Label(card, text=rule, style="Hint.TLabel").pack(
+                anchor="w", pady=(4, 0)
+            )
             sensor_row = ttk.Frame(card, style="Panel.TFrame")
             sensor_row.pack(fill="x", pady=(10, 0))
             high = ttk.Label(sensor_row, text="● HIGH OFF", style="Hint.TLabel")
@@ -1669,18 +1712,26 @@ class FlowControlApp(tk.Tk):
             anchor="w"
         )
         ttk.Label(
-            valves, text="레벨센서 무시 · 수동 개폐", style="Hint.TLabel"
+            valves, text="레벨센서 무시 · 수동 개폐 · 기능명 편집 가능", style="Hint.TLabel"
         ).pack(anchor="w", pady=(2, 10))
         self.test_valve_labels = []
-        for index, name in enumerate(("V1 급수", "V2 배수", "V3 배수")):
+        for index in range(3):
             row = ttk.Frame(valves, style="Panel.TFrame")
             row.pack(fill="x", pady=(0, 2))
             ttk.Label(
-                row, text=f"{name} / DO{index}", style="PanelTitle.TLabel"
+                row, text=f"DO{index}", style="PanelTitle.TLabel"
             ).pack(side="left")
             status = ttk.Label(row, text="닫힘", style="ValueSmall.TLabel")
             status.pack(side="right")
             self.test_valve_labels.append(status)
+            name_entry = ttk.Entry(
+                valves, textvariable=self.valve_name_vars[index], width=16
+            )
+            name_entry.pack(fill="x", pady=(0, 4))
+            name_entry.bind(
+                "<Return>",
+                lambda _event, i=index: self._commit_valve_name(i),
+            )
             buttons = ttk.Frame(valves, style="Panel.TFrame")
             buttons.pack(fill="x", pady=(0, 10))
             buttons.columnconfigure((0, 1), weight=1)
@@ -1696,6 +1747,12 @@ class FlowControlApp(tk.Tk):
                 style="Stop.TButton",
                 command=lambda valve=index: self.set_test_valve(valve, False),
             ).grid(row=0, column=1, sticky="ew", padx=(3, 0))
+        ttk.Button(
+            valves,
+            text="밸브 이름 저장",
+            style="Start.TButton",
+            command=self.save_valve_names,
+        ).pack(fill="x", pady=(4, 0))
 
         digital = self.panel(body)
         self.place_panel(digital, row=0, column=2, sticky="nsew", padx=(6, 0))
@@ -1766,6 +1823,36 @@ class FlowControlApp(tk.Tk):
             if self._ao_popup is not None and self._ao_popup.winfo_exists():
                 self._ao_popup.destroy()
             self._ao_popup = None
+
+    def _sync_valve_names(self) -> None:
+        names: list[str] = []
+        for index, var in enumerate(self.valve_name_vars):
+            text = var.get().strip() or self.valve_names[index]
+            names.append(text)
+            var.set(text)
+        self.valve_names = names
+
+    def _commit_valve_name(self, index: int) -> None:
+        text = self.valve_name_vars[index].get().strip() or self.valve_names[index]
+        self.valve_name_vars[index].set(text)
+        self.valve_names[index] = text
+
+    def save_valve_names(self) -> None:
+        self._sync_valve_names()
+        try:
+            data: dict[str, object] = {}
+            if self.SETTINGS_PATH.exists():
+                try:
+                    data = json.loads(self.SETTINGS_PATH.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    data = {}
+            data["valve_names"] = self.valve_names
+            self.SETTINGS_PATH.write_text(
+                json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
+            )
+            messagebox.showinfo("저장", "밸브 기능 이름을 저장했습니다.")
+        except OSError as exc:
+            messagebox.showerror("저장 실패", str(exc))
 
     def set_test_valve(self, index: int, opened: bool) -> None:
         """Directly command one valve while the I/O test popup owns DO0..DO2."""
@@ -2593,6 +2680,7 @@ class FlowControlApp(tk.Tk):
     # ------------------------------------------------------------- settings
     def save_settings(self) -> None:
         self._sync_tc_inputs(show_error=False)
+        self._sync_valve_names()
         data = {
             "pulse_ml": self.fb_pulse_ml.get(),
             "sv": self.sv.get(),
@@ -2613,6 +2701,7 @@ class FlowControlApp(tk.Tk):
             "tc_k_inputs": self.channels.tc_k_inputs,
             "tc_t_inputs": self.channels.tc_t_inputs,
             "tc_names": self.tc_names,
+            "valve_names": self.valve_names,
             "mp5y_port": self.mp5y_config.port,
             "mp5y_slave_id": self.mp5y_config.slave_id,
             "mp5y_baudrate": self.mp5y_config.baudrate,
@@ -2670,6 +2759,12 @@ class FlowControlApp(tk.Tk):
         tc_names = data.get("tc_names", self.tc_names)
         if isinstance(tc_names, list) and len(tc_names) == 10:
             self.tc_names = [str(name) for name in tc_names]
+        valve_names = data.get("valve_names", self.valve_names)
+        if isinstance(valve_names, list) and len(valve_names) == 3:
+            self.valve_names = [str(name) for name in valve_names]
+            for index, name in enumerate(self.valve_names):
+                if index < len(self.valve_name_vars):
+                    self.valve_name_vars[index].set(name)
         self.daq.channels = self.channels
         self._refresh_ng_ao_label()
         self.mp5y_config.port = str(data.get("mp5y_port", "COM9"))
