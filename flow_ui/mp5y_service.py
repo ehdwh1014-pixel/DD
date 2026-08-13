@@ -51,7 +51,7 @@ class Mp5yConfig:
     parity: str = "N"
     stopbits: int = 2
     bytesize: int = 8
-    timeout_s: float = 0.5
+    timeout_s: float = 1.0
     # "frequency_hz": MP5Y shows Hz, convert with pulse_ml * 60
     # "flow_ccpm": MP5Y already shows cc/min (prescale 27.6 = 0.46*60)
     value_mode: str = "flow_ccpm"
@@ -150,16 +150,52 @@ class Mp5yService:
         except ImportError as exc:
             raise Mp5yError("pymodbus / pyserial 패키지가 필요합니다.") from exc
 
-        client = ModbusSerialClient(
-            port=self.config.port,
-            baudrate=self.config.baudrate,
-            parity=self.config.parity,
-            stopbits=self.config.stopbits,
-            bytesize=self.config.bytesize,
-            timeout=self.config.timeout_s,
-        )
-        if not client.connect():
-            raise Mp5yError(f"{self.config.port} 연결 실패")
+        base: dict[str, object] = {
+            "port": self.config.port,
+            "baudrate": self.config.baudrate,
+            "parity": self.config.parity,
+            "stopbits": self.config.stopbits,
+            "bytesize": self.config.bytesize,
+            "timeout": self.config.timeout_s,
+        }
+        client = None
+        last_exc: Exception | None = None
+        # Try modern FramerType, then legacy method='rtu', then bare kwargs.
+        attempts: list[dict[str, object]] = [dict(base)]
+        try:
+            from pymodbus import FramerType  # type: ignore
+
+            modern = dict(base)
+            modern["framer"] = FramerType.RTU
+            attempts.insert(0, modern)
+        except Exception:  # noqa: BLE001
+            legacy = dict(base)
+            legacy["method"] = "rtu"
+            attempts.insert(0, legacy)
+
+        for kwargs in attempts:
+            try:
+                candidate = ModbusSerialClient(**kwargs)
+                if not candidate.connect():
+                    try:
+                        candidate.close()
+                    except Exception:  # noqa: BLE001
+                        pass
+                    last_exc = Mp5yError(f"{self.config.port} 연결 실패")
+                    continue
+                client = candidate
+                break
+            except TypeError as exc:
+                last_exc = exc
+                continue
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                continue
+
+        if client is None:
+            raise Mp5yError(str(last_exc) if last_exc else f"{self.config.port} 연결 실패")
+        # USB-RS485 adapters often need a short settle before the first RTU frame.
+        time.sleep(0.08)
         self._client = client
 
     def _close_client(self) -> None:
@@ -172,23 +208,58 @@ class Mp5yService:
         except Exception:  # noqa: BLE001
             pass
 
+    def _read_input_registers(self, address: int, count: int):
+        assert self._client is not None
+        # pymodbus renamed slave= → device_id= across 3.7/3.8.
+        try:
+            return self._client.read_input_registers(
+                address=address,
+                count=count,
+                device_id=self.config.slave_id,
+            )
+        except TypeError:
+            try:
+                return self._client.read_input_registers(
+                    address=address,
+                    count=count,
+                    slave=self.config.slave_id,
+                )
+            except TypeError:
+                return self._client.read_input_registers(
+                    address,
+                    count,
+                    self.config.slave_id,
+                )
+
     def _read_pv_once(self) -> tuple[float, float, int, int]:
         self._ensure_client()
         assert self._client is not None
-        # Read PV..MODE so we can show the operation mode (F1 recommended).
-        result = self._client.read_input_registers(
-            address=self.config.pv_address,
-            count=5,
-            device_id=self.config.slave_id,
-        )
-        if result is None or result.isError():
-            raise Mp5yError(f"Modbus 응답 오류: {result}")
+        # Prefer PV+DOT+UNIT+MODE (5 regs). Fall back to PV+DOT if meter rejects.
+        last_error: Exception | None = None
+        regs: list[int] | None = None
+        for count in (5, 3):
+            try:
+                result = self._read_input_registers(self.config.pv_address, count)
+                if result is None or result.isError():
+                    last_error = Mp5yError(f"Modbus 응답 오류: {result}")
+                    continue
+                regs = list(result.registers)
+                if len(regs) < 3:
+                    last_error = Mp5yError(f"레지스터 부족: {regs}")
+                    regs = None
+                    continue
+                break
+            except Exception as exc:  # noqa: BLE001
+                last_error = exc
+                regs = None
+                # Re-open port once; some adapters drop the first frame after connect.
+                self._close_client()
+                self._ensure_client()
+        if regs is None:
+            raise Mp5yError(str(last_error) if last_error else "Modbus 응답 없음")
 
-        regs = list(result.registers)
-        if len(regs) < 5:
-            raise Mp5yError(f"레지스터 부족: {regs}")
-
-        word0, word1, dot_reg, _unit, mode_reg = regs[:5]
+        word0, word1, dot_reg = regs[0], regs[1], regs[2]
+        mode_reg = regs[4] if len(regs) >= 5 else 0
         self.last_regs = (word0, word1, dot_reg)
         self.last_mode = int(mode_reg) & 0xFF
 

@@ -2115,10 +2115,12 @@ class FlowControlApp(tk.Tk):
             self.valve_commands = [False, False, False]
             self.level_master_status.configure(text="대기 · 밸브 닫힘")
             self._render_level_states([False] * 6, ["대기"] * 3)
-        # Avoid holding the serial port locked during idle; probe then release.
+        # Keep the Modbus session open once it works. Repeated open/close every
+        # 2s is unreliable on many USB-RS485 adapters and looked like "응답 없음".
         self._mp5y_port_present = self.mp5y.port_present()
         mp_ok = self.mp5y.check_connection()
-        self.mp5y.close()
+        if not mp_ok:
+            self.mp5y.close()
         self._mp5y_ok = mp_ok
         self._paint_mp5y_lamp()
 
@@ -2130,10 +2132,8 @@ class FlowControlApp(tk.Tk):
         elif ao_ok and level_ok:
             self._status_base_color = COLORS["warn"]
             if self._mp5y_port_present:
-                text = (
-                    f"NI DAQ 연결됨 · {self.mp5y_config.port} 연결 / "
-                    "MP5Y 응답 없음"
-                )
+                detail = self.mp5y.error or "MP5Y 응답 없음"
+                text = f"NI DAQ 연결됨 · {self.mp5y_config.port} / {detail}"
             else:
                 text = f"NI DAQ 연결됨 · {self.mp5y_config.port} 미연결"
         elif mp_ok and ao_ok:
@@ -2147,7 +2147,8 @@ class FlowControlApp(tk.Tk):
             text = f"MP5Y OK / NI: {self.daq.error}"
         elif self._mp5y_port_present:
             self._status_base_color = COLORS["warn"]
-            text = f"{self.mp5y_config.port} 연결 / MP5Y 응답 없음 · NI: {self.daq.error}"
+            detail = self.mp5y.error or "MP5Y 응답 없음"
+            text = f"{self.mp5y_config.port} / {detail} · NI: {self.daq.error}"
         else:
             self._status_base_color = COLORS["bad"]
             text = self.daq.error if self.daq.error else "연결 확인 필요 (COM / NI)"
@@ -2194,7 +2195,8 @@ class FlowControlApp(tk.Tk):
         elif self._mp5y_port_present:
             color = COLORS["warn"]
             outline = "#B7791F"
-            text = f"{self.mp5y_config.port} 연결 · 응답 없음"
+            detail = self.mp5y.error or "응답 없음"
+            text = f"{self.mp5y_config.port} · {detail}"
         else:
             color = COLORS["bad"]
             outline = "#9B2C2C"
