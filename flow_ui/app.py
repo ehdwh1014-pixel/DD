@@ -209,13 +209,13 @@ class FlowControlApp(tk.Tk):
         self.mp5y = Mp5yService(self.mp5y_config)
         self.lpf = LowPassFilter()
         self.pi = PIController(0.0, 5.0)
+        self.pulse_ml = tk.StringVar(value="0.46")
+        self.decimal_places = tk.StringVar(value="auto")
 
         self.active_page = "feedback"
-        self.monitor_running = False
         self.feedback_running = False
         self.level_running = False
         self._level_was_available = False
-        self._monitor_popup: tk.Toplevel | None = None
         self._ao_popup: tk.Toplevel | None = None
         self._tc_popup: tk.Toplevel | None = None
         self._keypad_popup: tk.Toplevel | None = None
@@ -473,12 +473,6 @@ class FlowControlApp(tk.Tk):
             ).pack(side="right", padx=(0, 6))
             ttk.Button(
                 status,
-                text="유량계 TEST",
-                style="Nav.TButton",
-                command=self.open_monitor_popup,
-            ).pack(side="right", padx=(0, 6))
-            ttk.Button(
-                status,
                 text="I/O TEST",
                 style="Nav.TButton",
                 command=self.open_ao_popup,
@@ -500,7 +494,6 @@ class FlowControlApp(tk.Tk):
         self.content = ttk.Frame(self, style="App.TFrame", padding=content_padding)
         self.content.pack(fill="both", expand=True)
         self.pages = {
-            "monitor": self._create_monitor_page(),
             "ao": self._create_ao_page(),
             "feedback": self._create_feedback_page(),
         }
@@ -660,7 +653,6 @@ class FlowControlApp(tk.Tk):
             self.touch_nav_buttons[name] = button
 
         actions = (
-            ("유량 TEST", self.open_monitor_popup),
             ("I/O TEST", self.open_ao_popup),
             ("TC MON", self.open_tc_popup),
             ("설정", self.open_settings),
@@ -724,6 +716,14 @@ class FlowControlApp(tk.Tk):
             command=self.reset_injection_time,
         ).pack(side="right")
 
+        self.feedback_button = ttk.Button(
+            current,
+            text="제어 시작",
+            style="TouchStart.TButton",
+            command=self.toggle_feedback,
+        )
+        self.feedback_button.pack(fill="x", pady=(3, 4))
+
         self.feedback_graph = TrendGraph(
             current,
             "PV / SV",
@@ -737,14 +737,6 @@ class FlowControlApp(tk.Tk):
         self.feedback_ao_graph = TrendGraph(
             current, "REF.W", [("REF.W", COLORS["ao"])], 0, 5, "V"
         )
-
-        self.feedback_button = ttk.Button(
-            current,
-            text="제어 시작",
-            style="TouchStart.TButton",
-            command=self.toggle_feedback,
-        )
-        self.feedback_button.pack(fill="x")
 
         target = self.panel(section)
         self.place_panel(target, row=0, column=1, sticky="nsew", padx=(0, 5))
@@ -971,12 +963,8 @@ class FlowControlApp(tk.Tk):
         self.p_gain = self.field(controls, 3, "P Gain", "0.020")
         self.i_gain = self.field(controls, 5, "I Gain", "0.005")
         self.lpf_cutoff = self.field(controls, 7, "LPF (Hz)", "0.8", "0 = OFF")
-        self.feedback_button = ttk.Button(
-            controls, text="제어 시작", style="Start.TButton", command=self.toggle_feedback
-        )
-        self.feedback_button.grid(row=9, column=0, sticky="ew", pady=(8, 0))
         ttk.Button(controls, text="저장", command=self.save_settings).grid(
-            row=9, column=1, sticky="ew", padx=(6, 0), pady=(8, 0)
+            row=9, column=0, columnspan=2, sticky="ew", pady=(8, 0)
         )
         ttk.Separator(controls, orient="horizontal").grid(
             row=10, column=0, columnspan=2, sticky="ew", pady=(10, 6)
@@ -1017,14 +1005,21 @@ class FlowControlApp(tk.Tk):
 
         ttk.Label(focus, text="SV (cc/min)", style="Panel.TLabel").pack(anchor="w", pady=(10, 0))
         self.sv = tk.StringVar(value="120.0")
+        self.sv_input = tk.StringVar(value="120.0")
         self.sv_entry = ttk.Entry(
             focus,
-            textvariable=self.sv,
+            textvariable=self.sv_input,
             style="Highlight.TEntry",
             justify="center",
             width=8,
         )
         self.sv_entry.pack(anchor="w", pady=(4, 0))
+        self.sv_entry.bind("<Return>", self._apply_sv_from_entry)
+        self.sv_entry.bind("<KP_Enter>", self._apply_sv_from_entry)
+        self.sv_apply_hint = ttk.Label(
+            focus, text="값 입력 후 Enter 적용", style="Hint.TLabel"
+        )
+        self.sv_apply_hint.pack(anchor="w", pady=(2, 0))
         self.output_value = ttk.Label(focus, text="REF.W: 0.000 V", style="ValueSmall.TLabel")
         self.output_value.pack(anchor="w", pady=(10, 0))
         self.control_start_label = ttk.Label(
@@ -1040,6 +1035,10 @@ class FlowControlApp(tk.Tk):
         ttk.Button(
             injection_row, text="초기화", command=self.reset_injection_time
         ).pack(side="right")
+        self.feedback_button = ttk.Button(
+            focus, text="제어 시작", style="Start.TButton", command=self.toggle_feedback
+        )
+        self.feedback_button.pack(fill="x", pady=(8, 0))
         self.focus_err = ttk.Label(focus, text="오차: 0.0 cc/min", style="ValueSmall.TLabel")
         self.fb_hz = ttk.Label(focus, text="MP5Y: 대기", style="Hint.TLabel")
 
@@ -1208,6 +1207,28 @@ class FlowControlApp(tk.Tk):
 
     def _set_sv(self, value: float) -> None:
         self.sv.set(f"{max(0.0, min(9999.0, float(value))):.1f}")
+
+    def _apply_sv_from_entry(self, _event: tk.Event | None = None) -> str:
+        """Apply desktop SV only when the operator presses Enter."""
+        text = self.sv_input.get().strip()
+        try:
+            value = float(text)
+        except ValueError:
+            messagebox.showerror("입력 오류", "SV에 숫자를 입력하세요.")
+            self.sv_input.set(self.sv.get())
+            return "break"
+        if not 0.0 <= value <= 9999.0:
+            messagebox.showerror("범위 오류", "SV는 0.0 ~ 9999.0 cc/min이어야 합니다.")
+            self.sv_input.set(self.sv.get())
+            return "break"
+        applied = f"{value:.1f}"
+        self.sv.set(applied)
+        self.sv_input.set(applied)
+        self.sv_apply_hint.configure(
+            text=f"적용됨: {applied} cc/min", foreground=COLORS["ok"]
+        )
+        self.sv_entry.selection_clear()
+        return "break"
 
     def _adjust_sv(self, delta: float) -> None:
         current = self.number_silent(self.sv, 0.0)
@@ -1678,7 +1699,7 @@ class FlowControlApp(tk.Tk):
         self.tc_value_labels = []
 
     def open_ao_popup(self) -> None:
-        """Open manual REF.W(AO0) and valve DO0..DO2 test window."""
+        """Open manual spare AO2 and DO5 sink-output test window."""
         if self._ao_popup is not None and self._ao_popup.winfo_exists():
             self._ao_popup.lift()
             self._ao_popup.focus_force()
@@ -1689,24 +1710,17 @@ class FlowControlApp(tk.Tk):
                 "I/O TEST는 NI 9264와 NI 9477이 모두 연결되어야 사용할 수 있습니다.",
             )
             return
-        if self.feedback_running:
-            self.toggle_feedback()
-        if self.monitor_running:
-            self.toggle_monitor()
 
         popup = tk.Toplevel(self)
         self._ao_popup = popup
-        popup.title("I/O 수동 TEST (REF.W/AO 2 + 밸브/DO 5)")
+        popup.title("I/O 수동 TEST (AO 2 + DO 5)")
         popup.configure(bg=COLORS["bg"])
-        self.io_test_active = True
         try:
-            self.valve_commands = self.daq.write_valves([False, False, False])
             self.current_spare_ao = self.daq.write_voltage(
                 0.0, self.channels.spare_ao
             )
             self.spare_do_on = self.daq.write_spare_do(False)
         except DaqError as exc:
-            self.io_test_active = False
             popup.destroy()
             self._ao_popup = None
             self._show_hardware_error(exc)
@@ -1714,8 +1728,8 @@ class FlowControlApp(tk.Tk):
 
         screen_w = max(self.winfo_screenwidth(), 800)
         screen_h = max(self.winfo_screenheight(), 480)
-        w = min(900, max(760, int(screen_w * 0.78)))
-        h = min(540, max(460, int(screen_h * 0.70)))
+        w = min(680, max(560, int(screen_w * 0.55)))
+        h = min(430, max(350, int(screen_h * 0.55)))
         popup.geometry(f"{w}x{h}")
 
         frame = ttk.Frame(popup, style="App.TFrame", padding=16)
@@ -1726,7 +1740,7 @@ class FlowControlApp(tk.Tk):
         )
         ttk.Label(
             frame,
-            text="TEST 중 레벨 자동제어는 일시 정지됩니다. 창을 닫으면 REF.W(AO0), AO 2, DO0~2, DO 5가 OFF되고 자동제어로 복귀합니다. NG PUMP(AO1)는 메인 화면에서 유지됩니다.",
+            text="AO 2는 0~5 V 출력, DO 5는 SINK 방식 ON/OFF 시험입니다. 창을 닫으면 AO 2=0 V, DO 5=OFF가 됩니다.",
             style="Hint.TLabel",
             wraplength=w - 60,
         ).pack(anchor="w", pady=(0, 10))
@@ -1736,49 +1750,9 @@ class FlowControlApp(tk.Tk):
         body.columnconfigure((0, 1), weight=1, uniform="test")
         body.rowconfigure(0, weight=1)
 
-        self.ao_voltage = tk.StringVar(value="0.0")
         controls = self.panel(body)
         self.place_panel(controls, row=0, column=0, sticky="nsew", padx=(0, 8))
-        ttk.Label(controls, text="REF.W (AO0)", style="PanelTitle.TLabel").pack(anchor="w")
-        ttk.Label(controls, text=self.channels.ao_pump, style="Hint.TLabel").pack(
-            anchor="w", pady=(2, 14)
-        )
-        ao_entry = ttk.Entry(
-            controls, textvariable=self.ao_voltage, style="Highlight.TEntry", justify="center"
-        )
-        ao_entry.pack(fill="x")
-        if self.touch_mode:
-            ao_entry.bind(
-                "<Button-1>",
-                lambda _event: (
-                    self.open_numeric_keypad(
-                        self.ao_voltage, "REF.W (AO0) 출력 (V)", 0.0, 5.0, 3
-                    ),
-                    "break",
-                )[1],
-            )
-        ttk.Label(controls, text="0.000 ~ 5.000 V", style="Hint.TLabel").pack(
-            anchor="w", pady=(3, 12)
-        )
-        ttk.Button(
-            controls,
-            text="전압 출력",
-            style="Start.TButton",
-            command=lambda: self.output_test_ao(0),
-        ).pack(fill="x")
-        ttk.Button(
-            controls,
-            text="0 V (정지)",
-            style="Stop.TButton",
-            command=lambda: self.zero_test_ao(0),
-        ).pack(fill="x", pady=(8, 0))
-        self.test_ao_value_labels = [
-            ttk.Label(controls, text="현재 출력: 0.000 V", style="ValueSmall.TLabel")
-        ]
-        self.test_ao_value_labels[0].pack(anchor="w", pady=(16, 0))
-
-        ttk.Separator(controls, orient="horizontal").pack(fill="x", pady=(18, 12))
-        ttk.Label(controls, text="AO 2", style="PanelTitle.TLabel").pack(anchor="w")
+        ttk.Label(controls, text="AO 2 · 0~5 V", style="PanelTitle.TLabel").pack(anchor="w")
         ttk.Label(controls, text=self.channels.spare_ao, style="Hint.TLabel").pack(
             anchor="w", pady=(2, 8)
         )
@@ -1820,50 +1794,23 @@ class FlowControlApp(tk.Tk):
         )
         self.spare_ao_value_label.pack(anchor="w", pady=(7, 0))
 
-        valves = self.panel(body)
-        self.place_panel(valves, row=0, column=1, sticky="nsew")
-        ttk.Label(valves, text="전동볼밸브 DO", style="PanelTitle.TLabel").pack(anchor="w")
+        digital = self.panel(body)
+        self.place_panel(digital, row=0, column=1, sticky="nsew")
+        ttk.Label(digital, text="DO 5 · SINK 출력", style="PanelTitle.TLabel").pack(anchor="w")
         ttk.Label(
-            valves, text="레벨센서 무시 · DO 직접 시험", style="Hint.TLabel"
+            digital, text="ON = 출력 SINK 활성 / OFF = 해제", style="Hint.TLabel"
         ).pack(anchor="w", pady=(2, 10))
-        self.test_valve_labels = []
-        for index in range(3):
-            row = ttk.Frame(valves, style="Panel.TFrame")
-            row.pack(fill="x", pady=5)
-            ttk.Label(row, text=f"V{index + 1} / DO{index}", style="Panel.TLabel").pack(
-                side="left"
-            )
-            status = ttk.Label(row, text="닫힘", style="Hint.TLabel")
-            status.pack(side="right")
-            buttons = ttk.Frame(valves, style="Panel.TFrame")
-            buttons.pack(fill="x", pady=(0, 5))
-            buttons.columnconfigure((0, 1), weight=1)
-            ttk.Button(
-                buttons,
-                text="열기",
-                style="Start.TButton",
-                command=lambda valve=index: self.set_test_valve(valve, True),
-            ).grid(row=0, column=0, sticky="ew", padx=(0, 3))
-            ttk.Button(
-                buttons,
-                text="닫기",
-                style="Stop.TButton",
-                command=lambda valve=index: self.set_test_valve(valve, False),
-            ).grid(row=0, column=1, sticky="ew", padx=(3, 0))
-            self.test_valve_labels.append(status)
-
-        ttk.Separator(valves, orient="horizontal").pack(fill="x", pady=(12, 10))
-        spare_do_row = ttk.Frame(valves, style="Panel.TFrame")
+        spare_do_row = ttk.Frame(digital, style="Panel.TFrame")
         spare_do_row.pack(fill="x")
         ttk.Label(spare_do_row, text="DO 5", style="PanelTitle.TLabel").pack(side="left")
         self.spare_do_status = ttk.Label(
             spare_do_row, text="OFF", style="ValueSmall.TLabel"
         )
         self.spare_do_status.pack(side="right")
-        ttk.Label(valves, text=self.channels.spare_do, style="Hint.TLabel").pack(
+        ttk.Label(digital, text=self.channels.spare_do, style="Hint.TLabel").pack(
             anchor="w", pady=(2, 7)
         )
-        spare_do_buttons = ttk.Frame(valves, style="Panel.TFrame")
+        spare_do_buttons = ttk.Frame(digital, style="Panel.TFrame")
         spare_do_buttons.pack(fill="x")
         spare_do_buttons.columnconfigure((0, 1), weight=1)
         ttk.Button(
@@ -1883,17 +1830,9 @@ class FlowControlApp(tk.Tk):
 
     def _close_ao_popup(self) -> None:
         try:
-            # Clear only TEST outputs. NG PUMP(AO1) stays under main-UI control.
-            try:
-                self.daq.write_voltage(0.0)
-            except DaqError:
-                pass
+            # Clear only AO2/DO5. Water pump, valves, and NG pump are untouched.
             try:
                 self.daq.write_voltage(0.0, self.channels.spare_ao)
-            except DaqError:
-                pass
-            try:
-                self.valve_commands = self.daq.write_valves([False, False, False])
             except DaqError:
                 pass
             try:
@@ -1901,12 +1840,8 @@ class FlowControlApp(tk.Tk):
             except DaqError:
                 pass
         finally:
-            self.current_ao = 0.0
             self.current_spare_ao = 0.0
             self.spare_do_on = False
-            self.io_test_active = False
-            if getattr(self, "output_value", None) is not None:
-                self.output_value.configure(text=f"REF.W: {self.current_ao:.3f} V")
             if self._ao_popup is not None and self._ao_popup.winfo_exists():
                 self._ao_popup.destroy()
             self._ao_popup = None
@@ -2096,23 +2031,6 @@ class FlowControlApp(tk.Tk):
         )
 
     # -------------------------------------------------------------- actions
-    def toggle_monitor(self) -> None:
-        if self.feedback_running:
-            messagebox.showinfo("안내", "피드백 제어 중에는 모니터를 따로 시작할 수 없습니다.")
-            return
-        if not self.monitor_running:
-            self.monitor_running = True
-            self.lpf.reset()
-            self._last_loop_at = time.monotonic()
-            self.mon_flow_graph.clear()
-            self.mon_hz_graph.clear()
-        else:
-            self.monitor_running = False
-        self.monitor_button.configure(
-            text="측정 중지" if self.monitor_running else "측정 시작",
-            style="Stop.TButton" if self.monitor_running else "Start.TButton",
-        )
-
     def output_ao(self) -> None:
         voltage = self.number(self.ao_voltage, "출력 전압")
         if voltage is None:
@@ -2275,9 +2193,6 @@ class FlowControlApp(tk.Tk):
                 "NI-DAQ 레벨/밸브 제어와 I/O TEST는 계속 사용할 수 있습니다.",
             )
             return
-        if self.monitor_running:
-            self.toggle_monitor()
-
         if not self.feedback_running:
             self.feedback_running = True
             self.pi.reset()
@@ -2437,8 +2352,6 @@ class FlowControlApp(tk.Tk):
     def update_loop(self) -> None:
         daq_failed = False
         try:
-            if self.monitor_running:
-                self._update_monitor()
             if self.feedback_running:
                 self._update_feedback()
         except Mp5yError as exc:
@@ -2467,7 +2380,6 @@ class FlowControlApp(tk.Tk):
     def _stop_mp5y_control(self, error: Exception) -> None:
         """Stop only flow-dependent control; keep independent DAQ I/O alive."""
         self._stop_feedback_timer()
-        self.monitor_running = False
         self.feedback_running = False
         stop_error = ""
         try:
@@ -2482,7 +2394,6 @@ class FlowControlApp(tk.Tk):
         self._mp5y_ok = False
         self._mp5y_port_present = self.mp5y.port_present()
         self._paint_mp5y_lamp(blink=False)
-        self.monitor_button.configure(text="측정 시작", style="Start.TButton")
         self.feedback_button.configure(
             text="제어 시작",
             style="TouchStart.TButton" if self.touch_mode else "Start.TButton",
@@ -2507,7 +2418,6 @@ class FlowControlApp(tk.Tk):
 
     def _safe_stop(self, error: Exception) -> None:
         self._stop_feedback_timer()
-        self.monitor_running = False
         self.feedback_running = False
         self.level_running = False
         self.igniter_on = False
@@ -2545,7 +2455,6 @@ class FlowControlApp(tk.Tk):
         except DaqError as exc:
             stop_error += f" / DO 5 OFF 실패: {exc}"
         self.mp5y.close()
-        self.monitor_button.configure(text="측정 시작", style="Start.TButton")
         self.feedback_button.configure(
             text="제어 시작",
             style="TouchStart.TButton" if self.touch_mode else "Start.TButton",
@@ -2838,6 +2747,8 @@ class FlowControlApp(tk.Tk):
         self.pulse_ml.set(str(data.get("pulse_ml", "0.46")))
         self.fb_pulse_ml.set(str(data.get("pulse_ml", "0.46")))
         self.sv.set(str(data.get("sv", "120.0")))
+        if hasattr(self, "sv_input"):
+            self.sv_input.set(self.sv.get())
         self.p_gain.set(str(data.get("p_gain", "0.020")))
         self.i_gain.set(str(data.get("i_gain", "0.005")))
         self.lpf_cutoff.set(str(data.get("lpf_cutoff", "0.8")))
@@ -2875,7 +2786,6 @@ class FlowControlApp(tk.Tk):
     def on_close(self) -> None:
         try:
             self.feedback_running = False
-            self.monitor_running = False
             self.level_running = False
             self.daq.close()
             self.mp5y.close()

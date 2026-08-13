@@ -8,11 +8,21 @@ from __future__ import annotations
 
 import sys
 import ctypes
-from ctypes import POINTER, byref, c_char_p, c_double, c_int32, c_uint32, c_uint8
+from ctypes import (
+    POINTER,
+    byref,
+    c_char_p,
+    c_double,
+    c_int32,
+    c_uint32,
+    c_uint8,
+    c_void_p,
+)
 from dataclasses import dataclass
 
 
-TaskHandle = c_uint32
+# NI-DAQmx TaskHandle is a pointer-sized opaque handle on 64-bit Windows.
+TaskHandle = c_void_p
 bool32 = c_uint32
 float64 = c_double
 int32 = c_int32
@@ -24,8 +34,8 @@ DAQmx_Val_Volts = 10348
 DAQmx_Val_DegC = 10143
 DAQmx_Val_GroupByChannel = 0
 DAQmx_Val_ChanPerLine = 0
-DAQmx_Val_ThermocoupleType_K = 10072
-DAQmx_Val_ThermocoupleType_T = 10085
+DAQmx_Val_ThermocoupleType_K = 10073
+DAQmx_Val_ThermocoupleType_T = 10086
 DAQmx_Val_BuiltIn = 10200
 
 
@@ -113,7 +123,7 @@ class DaqmxLite:
             bool32,
             float64,
             float64,
-            POINTER(bool32),
+            c_void_p,
         ]
         dll.DAQmxWriteAnalogScalarF64.restype = int32
 
@@ -125,7 +135,7 @@ class DaqmxLite:
             bool32,
             POINTER(uInt8),
             POINTER(int32),
-            POINTER(bool32),
+            c_void_p,
         ]
         dll.DAQmxWriteDigitalLines.restype = int32
 
@@ -138,7 +148,7 @@ class DaqmxLite:
             uInt32,
             POINTER(int32),
             POINTER(int32),
-            POINTER(bool32),
+            c_void_p,
         ]
         dll.DAQmxReadDigitalLines.restype = int32
 
@@ -150,7 +160,7 @@ class DaqmxLite:
             POINTER(float64),
             uInt32,
             POINTER(int32),
-            POINTER(bool32),
+            c_void_p,
         ]
         dll.DAQmxReadAnalogF64.restype = int32
 
@@ -212,14 +222,13 @@ class DaqmxLite:
         )
 
     def write_ao_voltage(self, handle: TaskHandle, voltage: float) -> None:
-        reserved = bool32(0)
         self._check(
             self._dll.DAQmxWriteAnalogScalarF64(
                 handle,
                 bool32(1),
                 float64(10.0),
                 float64(voltage),
-                byref(reserved),
+                None,
             )
         )
 
@@ -247,7 +256,6 @@ class DaqmxLite:
         data = (uInt8 * line_count)()
         samps = int32(0)
         bytes_per = int32(0)
-        reserved = bool32(0)
         self._check(
             self._dll.DAQmxReadDigitalLines(
                 handle,
@@ -258,7 +266,7 @@ class DaqmxLite:
                 uInt32(line_count),
                 byref(samps),
                 byref(bytes_per),
-                byref(reserved),
+                None,
             )
         )
         return [bool(data[i]) for i in range(line_count)]
@@ -266,7 +274,6 @@ class DaqmxLite:
     def write_digital_lines(self, handle: TaskHandle, values: list[bool]) -> None:
         data = (uInt8 * len(values))(*[1 if value else 0 for value in values])
         written = int32(0)
-        reserved = bool32(0)
         self._check(
             self._dll.DAQmxWriteDigitalLines(
                 handle,
@@ -276,7 +283,7 @@ class DaqmxLite:
                 bool32(DAQmx_Val_GroupByChannel),
                 data,
                 byref(written),
-                byref(reserved),
+                None,
             )
         )
 
@@ -307,7 +314,6 @@ class DaqmxLite:
     def read_analog(self, handle: TaskHandle, channel_count: int) -> list[float]:
         data = (float64 * channel_count)()
         read = int32(0)
-        reserved = bool32(0)
         self._check(
             self._dll.DAQmxReadAnalogF64(
                 handle,
@@ -317,7 +323,7 @@ class DaqmxLite:
                 data,
                 uInt32(channel_count),
                 byref(read),
-                byref(reserved),
+                None,
             )
         )
         return [float(data[i]) for i in range(channel_count)]
