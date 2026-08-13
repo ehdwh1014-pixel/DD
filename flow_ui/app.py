@@ -1558,7 +1558,7 @@ class FlowControlApp(tk.Tk):
         self.tc_value_labels = []
 
     def open_ao_popup(self) -> None:
-        """Open manual spare AO2 and DO4/DO5 sink-output test window."""
+        """Open manual AO2 + valve DO0..2 + spare DO4/DO5 test window."""
         if self._ao_popup is not None and self._ao_popup.winfo_exists():
             self._ao_popup.lift()
             self._ao_popup.focus_force()
@@ -1569,18 +1569,23 @@ class FlowControlApp(tk.Tk):
                 "I/O TEST는 NI 9264와 NI 9477이 모두 연결되어야 사용할 수 있습니다.",
             )
             return
+        if self.feedback_running:
+            self.toggle_feedback()
 
         popup = tk.Toplevel(self)
         self._ao_popup = popup
-        popup.title("I/O 수동 TEST (AO 2 + DO 4/5)")
+        popup.title("I/O 수동 TEST (AO2 + DO0~2 + DO4/5)")
         popup.configure(bg=COLORS["bg"])
+        self.io_test_active = True
         try:
+            self.valve_commands = self.daq.write_valves([False, False, False])
             self.current_spare_ao = self.daq.write_voltage(
                 0.0, self.channels.spare_ao
             )
             self.spare_do4_on = self.daq.write_spare_do4(False)
             self.spare_do_on = self.daq.write_spare_do(False)
         except DaqError as exc:
+            self.io_test_active = False
             popup.destroy()
             self._ao_popup = None
             self._show_hardware_error(exc)
@@ -1588,8 +1593,8 @@ class FlowControlApp(tk.Tk):
 
         screen_w = max(self.winfo_screenwidth(), 800)
         screen_h = max(self.winfo_screenheight(), 480)
-        w = min(720, max(580, int(screen_w * 0.55)))
-        h = min(520, max(420, int(screen_h * 0.62)))
+        w = min(980, max(820, int(screen_w * 0.88)))
+        h = min(560, max(460, int(screen_h * 0.72)))
         popup.geometry(f"{w}x{h}")
 
         frame = ttk.Frame(popup, style="App.TFrame", padding=16)
@@ -1601,8 +1606,9 @@ class FlowControlApp(tk.Tk):
         ttk.Label(
             frame,
             text=(
-                "AO 2는 0~5 V, DO 4/DO 5는 볼밸브와 같은 SINK ON/OFF 시험입니다. "
-                "창을 닫으면 AO 2=0 V, DO 4/5=OFF가 됩니다."
+                "TEST 중 레벨 자동제어는 일시 정지됩니다. "
+                "V1~V3(DO0~2)는 레벨센서와 무관하게 수동 개폐합니다. "
+                "창을 닫으면 AO2=0 V, DO0~2/DO4/DO5=OFF 후 자동제어로 복귀합니다."
             ),
             style="Hint.TLabel",
             wraplength=w - 60,
@@ -1610,11 +1616,11 @@ class FlowControlApp(tk.Tk):
 
         body = ttk.Frame(frame, style="App.TFrame")
         body.pack(fill="both", expand=True)
-        body.columnconfigure((0, 1), weight=1, uniform="test")
+        body.columnconfigure((0, 1, 2), weight=1, uniform="test")
         body.rowconfigure(0, weight=1)
 
         controls = self.panel(body)
-        self.place_panel(controls, row=0, column=0, sticky="nsew", padx=(0, 8))
+        self.place_panel(controls, row=0, column=0, sticky="nsew", padx=(0, 6))
         ttk.Label(controls, text="AO 2 · 0~5 V", style="PanelTitle.TLabel").pack(anchor="w")
         ttk.Label(controls, text=self.channels.spare_ao, style="Hint.TLabel").pack(
             anchor="w", pady=(2, 8)
@@ -1657,14 +1663,48 @@ class FlowControlApp(tk.Tk):
         )
         self.spare_ao_value_label.pack(anchor="w", pady=(7, 0))
 
-        digital = self.panel(body)
-        self.place_panel(digital, row=0, column=1, sticky="nsew")
+        valves = self.panel(body)
+        self.place_panel(valves, row=0, column=1, sticky="nsew", padx=6)
+        ttk.Label(valves, text="전동볼밸브 DO0~2", style="PanelTitle.TLabel").pack(
+            anchor="w"
+        )
         ttk.Label(
-            digital, text="DO 4 / DO 5 · SINK 밸브", style="PanelTitle.TLabel"
+            valves, text="레벨센서 무시 · 수동 개폐", style="Hint.TLabel"
+        ).pack(anchor="w", pady=(2, 10))
+        self.test_valve_labels = []
+        for index, name in enumerate(("V1 급수", "V2 배수", "V3 배수")):
+            row = ttk.Frame(valves, style="Panel.TFrame")
+            row.pack(fill="x", pady=(0, 2))
+            ttk.Label(
+                row, text=f"{name} / DO{index}", style="PanelTitle.TLabel"
+            ).pack(side="left")
+            status = ttk.Label(row, text="닫힘", style="ValueSmall.TLabel")
+            status.pack(side="right")
+            self.test_valve_labels.append(status)
+            buttons = ttk.Frame(valves, style="Panel.TFrame")
+            buttons.pack(fill="x", pady=(0, 10))
+            buttons.columnconfigure((0, 1), weight=1)
+            ttk.Button(
+                buttons,
+                text="열기",
+                style="Start.TButton",
+                command=lambda valve=index: self.set_test_valve(valve, True),
+            ).grid(row=0, column=0, sticky="ew", padx=(0, 3))
+            ttk.Button(
+                buttons,
+                text="닫기",
+                style="Stop.TButton",
+                command=lambda valve=index: self.set_test_valve(valve, False),
+            ).grid(row=0, column=1, sticky="ew", padx=(3, 0))
+
+        digital = self.panel(body)
+        self.place_panel(digital, row=0, column=2, sticky="nsew", padx=(6, 0))
+        ttk.Label(
+            digital, text="여분 DO 4 / DO 5", style="PanelTitle.TLabel"
         ).pack(anchor="w")
         ttk.Label(
             digital,
-            text="DO0~2와 동일 배선 · ON = SINK 활성 / OFF = 해제",
+            text="DO0~2와 동일 SINK · 수동 ON/OFF",
             style="Hint.TLabel",
         ).pack(anchor="w", pady=(2, 10))
 
@@ -1701,9 +1741,13 @@ class FlowControlApp(tk.Tk):
 
     def _close_ao_popup(self) -> None:
         try:
-            # Clear only AO2/DO4/DO5. Water pump, valves, and NG pump are untouched.
+            # Clear TEST outputs. Water pump AO0 and NG PUMP AO1 stay as-is.
             try:
                 self.daq.write_voltage(0.0, self.channels.spare_ao)
+            except DaqError:
+                pass
+            try:
+                self.valve_commands = self.daq.write_valves([False, False, False])
             except DaqError:
                 pass
             try:
@@ -1718,9 +1762,30 @@ class FlowControlApp(tk.Tk):
             self.current_spare_ao = 0.0
             self.spare_do4_on = False
             self.spare_do_on = False
+            self.io_test_active = False
             if self._ao_popup is not None and self._ao_popup.winfo_exists():
                 self._ao_popup.destroy()
             self._ao_popup = None
+
+    def set_test_valve(self, index: int, opened: bool) -> None:
+        """Directly command one valve while the I/O test popup owns DO0..DO2."""
+        commands = list(self.valve_commands)
+        commands[index] = bool(opened)
+        try:
+            self.valve_commands = self.daq.write_valves(commands)
+        except DaqError as exc:
+            self._show_hardware_error(exc)
+            return
+        if hasattr(self, "test_valve_labels") and index < len(self.test_valve_labels):
+            self.test_valve_labels[index].configure(
+                text="열림" if opened else "닫힘",
+                foreground=COLORS["ok"] if opened else COLORS["accent_deep"],
+            )
+        if hasattr(self, "valve_status_labels") and index < len(self.valve_status_labels):
+            self.valve_status_labels[index].configure(
+                text="열림" if opened else "닫힘",
+                foreground=COLORS["ok"] if opened else COLORS["accent_deep"],
+            )
 
     def number(self, variable: tk.StringVar, label: str) -> float | None:
         try:
