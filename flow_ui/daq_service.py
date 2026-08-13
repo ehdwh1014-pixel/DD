@@ -4,7 +4,7 @@ Hardware (NI MAX):
   Chassis : cDAQ-9178 -> cDAQ2
   Slot 1  : NI 9264   -> cDAQ2Mod1  (REF.W ao0 + NG PUMP ao1 + spare ao2)
   Slot 2  : NI 9422   -> cDAQ2Mod2  (three HIGH/LOW level inputs, DI0..DI5)
-  Slot 3  : NI 9477   -> cDAQ2Mod3  (valves DO0..2, igniter DO3, FX DO4, spare DO5)
+  Slot 3  : NI 9477   -> cDAQ2Mod3  (valves DO0..2, igniter DO3, spare DO4/DO5)
   Slot 4  : NI 9214   -> cDAQ2Mod4  (optional TC: K ai0..4, T ai5..9)
 
 Uses a lightweight ctypes wrapper (flow_ui.nidaqmx_lite) so the frozen EXE
@@ -76,8 +76,11 @@ class ChannelConfig:
     valve_outputs: str = f"{DO_MODULE}/port0/line0:2"
     flame_input: str = f"{DI_MODULE}/port0/line6"
     igniter_output: str = f"{DO_MODULE}/port0/line3"
-    inverter_run: str = f"{DO_MODULE}/port0/line4"
+    # DO4 is a spare sink valve (same electrical style as DO0..2), not inverter FX.
+    spare_do4: str = f"{DO_MODULE}/port0/line4"
     spare_do: str = f"{DO_MODULE}/port0/line5"
+    # Optional inverter FX channel. Empty = unused (DO4 is free for a valve).
+    inverter_run: str = ""
     tc_k_inputs: str = f"{TC_MODULE}/ai0:4"
     tc_t_inputs: str = f"{TC_MODULE}/ai5:9"
 
@@ -100,7 +103,7 @@ def apply_module_names(
     if do:
         channels.valve_outputs = f"{do}/port0/line0:2"
         channels.igniter_output = f"{do}/port0/line3"
-        channels.inverter_run = f"{do}/port0/line4"
+        channels.spare_do4 = f"{do}/port0/line4"
         channels.spare_do = f"{do}/port0/line5"
     if tc:
         channels.tc_k_inputs = f"{tc}/ai0:4"
@@ -126,6 +129,7 @@ class DaqService:
         self._di_flame_task = None
         self._do_igniter_task = None
         self._do_inverter_task = None
+        self._do_spare4_task = None
         self._do_spare_task = None
         self._tc_task = None
         self._tc_channels: tuple[str, str] | None = None
@@ -135,10 +139,12 @@ class DaqService:
         self._flame_channel: str | None = None
         self._igniter_channel: str | None = None
         self._inverter_channel: str | None = None
+        self._spare_do4_channel: str | None = None
         self._spare_do_channel: str | None = None
         self._last_valves = [False, False, False]
         self._last_igniter = False
         self._last_inverter = False
+        self._last_spare_do4 = False
         self._last_spare_do = False
         try:
             self._daq = DaqmxLite()
@@ -151,6 +157,7 @@ class DaqService:
         self._close_di_flame_task()
         self._close_do_igniter_task()
         self._close_do_inverter_task()
+        self._close_do_spare4_task()
         self._close_do_spare_task()
         self._close_tc_task()
         self._close_ao_task()
@@ -354,27 +361,56 @@ class DaqService:
             raise DaqError(f"점화기 SSR 출력 오류: {exc}") from exc
 
     def write_inverter_run(self, on: bool) -> bool:
+        """Optional FX DO. No-op when inverter_run channel is empty (default)."""
         on = bool(on)
+        channel = (self.channels.inverter_run or "").strip()
+        if not channel:
+            self._last_inverter = on
+            return on
         if not (self.level_available and self._daq):
             self._last_inverter = on
             return on
         try:
             if (
                 self._do_inverter_task is not None
-                and self._inverter_channel != self.channels.inverter_run
+                and self._inverter_channel != channel
             ):
                 self._close_do_inverter_task()
             if self._do_inverter_task is None:
                 task = self._daq.create_task()
-                self._daq.create_do_lines(task, self.channels.inverter_run)
+                self._daq.create_do_lines(task, channel)
                 self._do_inverter_task = task
-                self._inverter_channel = self.channels.inverter_run
+                self._inverter_channel = channel
             self._daq.write_digital_lines(self._do_inverter_task, [on])
             self._last_inverter = on
             return on
         except Exception as exc:  # noqa: BLE001
             self._close_do_inverter_task()
-            raise DaqError(f"인버터 RUN(DO4) 출력 오류: {exc}") from exc
+            raise DaqError(f"인버터 RUN 출력 오류: {exc}") from exc
+
+    def write_spare_do4(self, on: bool) -> bool:
+        """Spare valve DO4 SINK: True=ON, False=OFF (same wiring as DO0–2)."""
+        on = bool(on)
+        if not (self.level_available and self._daq):
+            self._last_spare_do4 = on
+            return on
+        try:
+            if (
+                self._do_spare4_task is not None
+                and self._spare_do4_channel != self.channels.spare_do4
+            ):
+                self._close_do_spare4_task()
+            if self._do_spare4_task is None:
+                task = self._daq.create_task()
+                self._daq.create_do_lines(task, self.channels.spare_do4)
+                self._do_spare4_task = task
+                self._spare_do4_channel = self.channels.spare_do4
+            self._daq.write_digital_lines(self._do_spare4_task, [on])
+            self._last_spare_do4 = on
+            return on
+        except Exception as exc:  # noqa: BLE001
+            self._close_do_spare4_task()
+            raise DaqError(f"DO 4 출력 오류: {exc}") from exc
 
     def write_spare_do(self, on: bool) -> bool:
         on = bool(on)
@@ -459,6 +495,12 @@ class DaqService:
         self._inverter_channel = None
         self._clear_handle(task)
 
+    def _close_do_spare4_task(self) -> None:
+        task = self._do_spare4_task
+        self._do_spare4_task = None
+        self._spare_do4_channel = None
+        self._clear_handle(task)
+
     def _close_do_spare_task(self) -> None:
         task = self._do_spare_task
         self._do_spare_task = None
@@ -492,6 +534,10 @@ class DaqService:
         except DaqError:
             pass
         try:
+            self.write_spare_do4(False)
+        except DaqError:
+            pass
+        try:
             self.write_spare_do(False)
         except DaqError:
             pass
@@ -512,6 +558,7 @@ class DaqService:
         self._close_di_flame_task()
         self._close_do_igniter_task()
         self._close_do_inverter_task()
+        self._close_do_spare4_task()
         self._close_do_spare_task()
         self._close_tc_task()
         self._close_ao_task()

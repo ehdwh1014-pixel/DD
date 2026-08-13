@@ -61,6 +61,9 @@ class TestDaqDeviceHelpers(unittest.TestCase):
         self.assertEqual(channels.ao_pump, "cDAQ1Mod1/ao0")
         self.assertEqual(channels.level_inputs, "cDAQ1Mod2/port0/line0:5")
         self.assertEqual(channels.valve_outputs, "cDAQ1Mod3/port0/line0:2")
+        self.assertEqual(channels.spare_do4, "cDAQ1Mod3/port0/line4")
+        self.assertEqual(channels.spare_do, "cDAQ1Mod3/port0/line5")
+        self.assertEqual(channels.inverter_run, "")
         self.assertEqual(channels.tc_k_inputs, "cDAQ1Mod4/ai0:4")
 
 

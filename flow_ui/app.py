@@ -226,6 +226,7 @@ class FlowControlApp(tk.Tk):
         self.current_ao = 0.0
         self.current_ng_ao = 0.0
         self.current_spare_ao = 0.0
+        self.spare_do4_on = False
         self.spare_do_on = False
         self.ng_ao_voltage = tk.StringVar(value="0.0")
         self.filtered_flow = 0.0
@@ -1557,7 +1558,7 @@ class FlowControlApp(tk.Tk):
         self.tc_value_labels = []
 
     def open_ao_popup(self) -> None:
-        """Open manual spare AO2 and DO5 sink-output test window."""
+        """Open manual spare AO2 and DO4/DO5 sink-output test window."""
         if self._ao_popup is not None and self._ao_popup.winfo_exists():
             self._ao_popup.lift()
             self._ao_popup.focus_force()
@@ -1571,12 +1572,13 @@ class FlowControlApp(tk.Tk):
 
         popup = tk.Toplevel(self)
         self._ao_popup = popup
-        popup.title("I/O 수동 TEST (AO 2 + DO 5)")
+        popup.title("I/O 수동 TEST (AO 2 + DO 4/5)")
         popup.configure(bg=COLORS["bg"])
         try:
             self.current_spare_ao = self.daq.write_voltage(
                 0.0, self.channels.spare_ao
             )
+            self.spare_do4_on = self.daq.write_spare_do4(False)
             self.spare_do_on = self.daq.write_spare_do(False)
         except DaqError as exc:
             popup.destroy()
@@ -1586,8 +1588,8 @@ class FlowControlApp(tk.Tk):
 
         screen_w = max(self.winfo_screenwidth(), 800)
         screen_h = max(self.winfo_screenheight(), 480)
-        w = min(680, max(560, int(screen_w * 0.55)))
-        h = min(430, max(350, int(screen_h * 0.55)))
+        w = min(720, max(580, int(screen_w * 0.55)))
+        h = min(520, max(420, int(screen_h * 0.62)))
         popup.geometry(f"{w}x{h}")
 
         frame = ttk.Frame(popup, style="App.TFrame", padding=16)
@@ -1598,7 +1600,10 @@ class FlowControlApp(tk.Tk):
         )
         ttk.Label(
             frame,
-            text="AO 2는 0~5 V 출력, DO 5는 SINK 방식 ON/OFF 시험입니다. 창을 닫으면 AO 2=0 V, DO 5=OFF가 됩니다.",
+            text=(
+                "AO 2는 0~5 V, DO 4/DO 5는 볼밸브와 같은 SINK ON/OFF 시험입니다. "
+                "창을 닫으면 AO 2=0 V, DO 4/5=OFF가 됩니다."
+            ),
             style="Hint.TLabel",
             wraplength=w - 60,
         ).pack(anchor="w", pady=(0, 10))
@@ -1654,43 +1659,55 @@ class FlowControlApp(tk.Tk):
 
         digital = self.panel(body)
         self.place_panel(digital, row=0, column=1, sticky="nsew")
-        ttk.Label(digital, text="DO 5 · SINK 출력", style="PanelTitle.TLabel").pack(anchor="w")
         ttk.Label(
-            digital, text="ON = 출력 SINK 활성 / OFF = 해제", style="Hint.TLabel"
+            digital, text="DO 4 / DO 5 · SINK 밸브", style="PanelTitle.TLabel"
+        ).pack(anchor="w")
+        ttk.Label(
+            digital,
+            text="DO0~2와 동일 배선 · ON = SINK 활성 / OFF = 해제",
+            style="Hint.TLabel",
         ).pack(anchor="w", pady=(2, 10))
-        spare_do_row = ttk.Frame(digital, style="Panel.TFrame")
-        spare_do_row.pack(fill="x")
-        ttk.Label(spare_do_row, text="DO 5", style="PanelTitle.TLabel").pack(side="left")
-        self.spare_do_status = ttk.Label(
-            spare_do_row, text="OFF", style="ValueSmall.TLabel"
-        )
-        self.spare_do_status.pack(side="right")
-        ttk.Label(digital, text=self.channels.spare_do, style="Hint.TLabel").pack(
-            anchor="w", pady=(2, 7)
-        )
-        spare_do_buttons = ttk.Frame(digital, style="Panel.TFrame")
-        spare_do_buttons.pack(fill="x")
-        spare_do_buttons.columnconfigure((0, 1), weight=1)
-        ttk.Button(
-            spare_do_buttons,
-            text="ON",
-            style="Start.TButton",
-            command=lambda: self.set_spare_do(True),
-        ).grid(row=0, column=0, sticky="ew", padx=(0, 3))
-        ttk.Button(
-            spare_do_buttons,
-            text="OFF",
-            style="Stop.TButton",
-            command=lambda: self.set_spare_do(False),
-        ).grid(row=0, column=1, sticky="ew", padx=(3, 0))
+
+        for label, channel, status_attr, setter in (
+            ("DO 4", self.channels.spare_do4, "spare_do4_status", self.set_spare_do4),
+            ("DO 5", self.channels.spare_do, "spare_do_status", self.set_spare_do),
+        ):
+            row = ttk.Frame(digital, style="Panel.TFrame")
+            row.pack(fill="x", pady=(0, 2))
+            ttk.Label(row, text=label, style="PanelTitle.TLabel").pack(side="left")
+            status = ttk.Label(row, text="OFF", style="ValueSmall.TLabel")
+            status.pack(side="right")
+            setattr(self, status_attr, status)
+            ttk.Label(digital, text=channel, style="Hint.TLabel").pack(
+                anchor="w", pady=(0, 4)
+            )
+            buttons = ttk.Frame(digital, style="Panel.TFrame")
+            buttons.pack(fill="x", pady=(0, 12))
+            buttons.columnconfigure((0, 1), weight=1)
+            ttk.Button(
+                buttons,
+                text="ON",
+                style="Start.TButton",
+                command=lambda on=True, fn=setter: fn(on),
+            ).grid(row=0, column=0, sticky="ew", padx=(0, 3))
+            ttk.Button(
+                buttons,
+                text="OFF",
+                style="Stop.TButton",
+                command=lambda on=False, fn=setter: fn(on),
+            ).grid(row=0, column=1, sticky="ew", padx=(3, 0))
 
         popup.protocol("WM_DELETE_WINDOW", self._close_ao_popup)
 
     def _close_ao_popup(self) -> None:
         try:
-            # Clear only AO2/DO5. Water pump, valves, and NG pump are untouched.
+            # Clear only AO2/DO4/DO5. Water pump, valves, and NG pump are untouched.
             try:
                 self.daq.write_voltage(0.0, self.channels.spare_ao)
+            except DaqError:
+                pass
+            try:
+                self.daq.write_spare_do4(False)
             except DaqError:
                 pass
             try:
@@ -1699,6 +1716,7 @@ class FlowControlApp(tk.Tk):
                 pass
         finally:
             self.current_spare_ao = 0.0
+            self.spare_do4_on = False
             self.spare_do_on = False
             if self._ao_popup is not None and self._ao_popup.winfo_exists():
                 self._ao_popup.destroy()
@@ -1776,6 +1794,10 @@ class FlowControlApp(tk.Tk):
             "  DO ON = White를 0V로 당김 = 열림 명령\n"
             "  ※ 0V 여부는 명령 확인이며 실제 기계 위치 피드백은 아님\n"
             "\n"
+            "【예비 밸브 DO4 / DO5 → NI 9477】\n"
+            "  DO0~2와 동일 SINK 배선 (White→DO4 또는 DO5)\n"
+            "  I/O TEST에서 수동 ON/OFF\n"
+            "\n"
             "UI는 MP5Y 표시값(cc/min)을 그대로 PV로 사용합니다.\n"
             "(소프트웨어에서 ×0.46×60 를 다시 하지 않음)"
         )
@@ -1817,7 +1839,8 @@ class FlowControlApp(tk.Tk):
         do_var = tk.StringVar(value=self.channels.valve_outputs)
         flame_di_var = tk.StringVar(value=self.channels.flame_input)
         igniter_do_var = tk.StringVar(value=self.channels.igniter_output)
-        inverter_do_var = tk.StringVar(value=self.channels.inverter_run)
+        spare_do4_var = tk.StringVar(value=self.channels.spare_do4)
+        spare_do_var = tk.StringVar(value=self.channels.spare_do)
         port_var = tk.StringVar(value=self.mp5y_config.port)
         slave_var = tk.StringVar(value=str(self.mp5y_config.slave_id))
         baud_var = tk.StringVar(value=str(self.mp5y_config.baudrate))
@@ -1830,12 +1853,13 @@ class FlowControlApp(tk.Tk):
             (4, "밸브 출력 DO0:2", do_var),
             (5, "화염 감지 DI6", flame_di_var),
             (6, "점화기 SSR DO3", igniter_do_var),
-            (7, "인버터 RUN DO4", inverter_do_var),
-            (8, "MP5Y COM 포트", port_var),
-            (9, "MP5Y 주소", slave_var),
-            (10, "MP5Y Baud", baud_var),
-            (11, "표시모드 (frequency_hz/flow_ccpm)", mode_var),
-            (12, "PV포맷 (int16/int32/dec32)", fmt_var),
+            (7, "예비 밸브 DO4", spare_do4_var),
+            (8, "예비 DO5", spare_do_var),
+            (9, "MP5Y COM 포트", port_var),
+            (10, "MP5Y 주소", slave_var),
+            (11, "MP5Y Baud", baud_var),
+            (12, "표시모드 (frequency_hz/flow_ccpm)", mode_var),
+            (13, "PV포맷 (int16/int32/dec32)", fmt_var),
         ):
             ttk.Label(frame, text=label, style="Panel.TLabel").grid(
                 row=row, column=0, sticky="w", pady=3 if self.touch_mode else 8
@@ -1851,7 +1875,11 @@ class FlowControlApp(tk.Tk):
             self.channels.valve_outputs = do_var.get().strip() or self.channels.valve_outputs
             self.channels.flame_input = flame_di_var.get().strip() or self.channels.flame_input
             self.channels.igniter_output = igniter_do_var.get().strip() or self.channels.igniter_output
-            self.channels.inverter_run = inverter_do_var.get().strip() or self.channels.inverter_run
+            self.channels.spare_do4 = spare_do4_var.get().strip() or self.channels.spare_do4
+            self.channels.spare_do = spare_do_var.get().strip() or self.channels.spare_do
+            # DO4 is reserved for the spare valve; do not keep a legacy FX mapping on line4.
+            if (self.channels.inverter_run or "").endswith("/port0/line4"):
+                self.channels.inverter_run = ""
             self.daq.channels = self.channels
             self.mp5y_config.port = port_var.get().strip() or "COM9"
             try:
@@ -1936,16 +1964,29 @@ class FlowControlApp(tk.Tk):
         self.spare_ao_voltage.set("0.0")
         self.output_spare_ao()
 
+    def set_spare_do4(self, on: bool) -> None:
+        try:
+            self.spare_do4_on = self.daq.write_spare_do4(on)
+        except DaqError as exc:
+            self._show_hardware_error(exc)
+            return
+        if hasattr(self, "spare_do4_status"):
+            self.spare_do4_status.configure(
+                text="ON" if self.spare_do4_on else "OFF",
+                foreground=COLORS["ok"] if self.spare_do4_on else COLORS["accent_deep"],
+            )
+
     def set_spare_do(self, on: bool) -> None:
         try:
             self.spare_do_on = self.daq.write_spare_do(on)
         except DaqError as exc:
             self._show_hardware_error(exc)
             return
-        self.spare_do_status.configure(
-            text="ON" if self.spare_do_on else "OFF",
-            foreground=COLORS["ok"] if self.spare_do_on else COLORS["accent_deep"],
-        )
+        if hasattr(self, "spare_do_status"):
+            self.spare_do_status.configure(
+                text="ON" if self.spare_do_on else "OFF",
+                foreground=COLORS["ok"] if self.spare_do_on else COLORS["accent_deep"],
+            )
 
     def apply_ng_ao(self) -> None:
         """Apply NG PUMP AO1 voltage from the main UI."""
@@ -2001,7 +2042,8 @@ class FlowControlApp(tk.Tk):
         ):
             messagebox.showerror(
                 "NI-DAQ 오류",
-                "피드백 제어는 NI 9264(AO)와 NI 9477(DO4)이 모두 연결되어야 합니다.",
+                "피드백 제어는 NI 9264(AO0)가 연결되어야 합니다.\n"
+                "(레벨/밸브용 9422·9477도 함께 필요합니다.)",
             )
             return
         if not self.feedback_running and not self._mp5y_ok:
@@ -2023,18 +2065,11 @@ class FlowControlApp(tk.Tk):
             self.feedback_ao_graph.clear()
             sv = self.number_silent(self.sv, 120)
             self.feedback_graph.set_scale(0, max(200.0, sv * 1.5), "cc/min")
-            try:
-                self.daq.write_inverter_run(True)
-            except DaqError as exc:
-                self.feedback_running = False
-                self._safe_stop(exc)
-                return
         else:
             self._stop_feedback_timer()
             self.feedback_running = False
             try:
                 self.current_ao = self.daq.write_voltage(0.0)
-                self.daq.write_inverter_run(False)
             except DaqError as exc:
                 self._safe_stop(exc)
                 return
@@ -2204,10 +2239,6 @@ class FlowControlApp(tk.Tk):
             self.current_ao = self.daq.write_voltage(0.0)
         except DaqError as exc:
             stop_error = f" / AO0 정지 실패: {exc}"
-        try:
-            self.daq.write_inverter_run(False)
-        except DaqError as exc:
-            stop_error += f" / 인버터 RUN OFF 실패: {exc}"
         self.mp5y.close()
         self._mp5y_ok = False
         self._mp5y_port_present = self.mp5y.port_present()
@@ -2265,9 +2296,9 @@ class FlowControlApp(tk.Tk):
         except DaqError as exc:
             stop_error += f" / 점화기 SSR OFF 실패: {exc}"
         try:
-            self.daq.write_inverter_run(False)
+            self.spare_do4_on = self.daq.write_spare_do4(False)
         except DaqError as exc:
-            stop_error += f" / 인버터 RUN OFF 실패: {exc}"
+            stop_error += f" / DO 4 OFF 실패: {exc}"
         try:
             self.spare_do_on = self.daq.write_spare_do(False)
         except DaqError as exc:
@@ -2509,8 +2540,9 @@ class FlowControlApp(tk.Tk):
             "valve_outputs": self.channels.valve_outputs,
             "flame_input": self.channels.flame_input,
             "igniter_output": self.channels.igniter_output,
-            "inverter_run": self.channels.inverter_run,
+            "spare_do4": self.channels.spare_do4,
             "spare_do": self.channels.spare_do,
+            "inverter_run": self.channels.inverter_run,
             "tc_k_inputs": self.channels.tc_k_inputs,
             "tc_t_inputs": self.channels.tc_t_inputs,
             "tc_names": self.tc_names,
@@ -2552,8 +2584,16 @@ class FlowControlApp(tk.Tk):
         self.channels.valve_outputs = str(data.get("valve_outputs", self.channels.valve_outputs))
         self.channels.flame_input = str(data.get("flame_input", self.channels.flame_input))
         self.channels.igniter_output = str(data.get("igniter_output", self.channels.igniter_output))
-        self.channels.inverter_run = str(data.get("inverter_run", self.channels.inverter_run))
+        self.channels.spare_do4 = str(data.get("spare_do4", self.channels.spare_do4))
         self.channels.spare_do = str(data.get("spare_do", self.channels.spare_do))
+        legacy_inv = str(data.get("inverter_run", self.channels.inverter_run))
+        # Old builds mapped DO4 to iG5A FX. Free line4 for the spare valve.
+        if legacy_inv.endswith("/port0/line4"):
+            if "spare_do4" not in data:
+                self.channels.spare_do4 = legacy_inv
+            self.channels.inverter_run = ""
+        else:
+            self.channels.inverter_run = legacy_inv
         self.channels.tc_k_inputs = str(
             data.get("tc_k_inputs", self.channels.tc_k_inputs)
         )
