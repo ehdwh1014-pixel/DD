@@ -1,8 +1,11 @@
-"""Build PulseFlow.exe for Windows industrial PC deployment."""
+"""Build PulseFlow.exe for Windows industrial PC deployment.
+
+Uses a ctypes NI-DAQmx wrapper (no Python nidaqmx/numpy), so the one-file
+EXE stays small and starts faster on industrial PCs.
+"""
 
 from __future__ import annotations
 
-import importlib.metadata
 import shutil
 import subprocess
 import sys
@@ -13,12 +16,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 DIST = ROOT / "dist"
 DEPLOY = ROOT / "deploy"
-HOOKS = ROOT / "pyinstaller_hooks"
 EXE_NAME = "PulseFlow.exe"
 ZIP_NAME = "PulseFlow_deploy.zip"
 
-# Heavy / unused modules that inflate onefile size and slow cold start.
 EXCLUDE_MODULES = (
+    "nidaqmx",
+    "numpy",
     "matplotlib",
     "scipy",
     "pandas",
@@ -33,10 +36,7 @@ EXCLUDE_MODULES = (
     "grpcio",
     "aiohttp",
     "tornado",
-    "numpy.tests",
-    "numpy.f2py",
-    "numpy.distutils",
-    "nidaqmx.tests",
+    "requests",
     "pymodbus.server",
     "pymodbus.simulator",
     "tkinter.test",
@@ -53,16 +53,7 @@ def run(command: list[str]) -> None:
         raise SystemExit(completed.returncode)
 
 
-def verify_nidaqmx_import() -> str:
-    import nidaqmx  # noqa: WPS433 - build-time dependency check
-
-    version = importlib.metadata.version("nidaqmx")
-    print(f"nidaqmx import OK · version {version}")
-    return version
-
-
 def pyinstaller_command() -> list[str]:
-    hooks_dir = HOOKS.resolve()
     command = [
         sys.executable,
         "-m",
@@ -79,36 +70,8 @@ def pyinstaller_command() -> list[str]:
         f"{ROOT / 'flow_ui' / 'assets' / 'app_icon.ico'};flow_ui/assets",
         "--add-data",
         f"{ROOT / 'flow_ui' / 'assets' / 'app_icon.png'};flow_ui/assets",
-        "--additional-hooks-dir",
-        str(hooks_dir),
-        "--copy-metadata",
-        "nidaqmx",
-        "--copy-metadata",
-        "nitypes",
-        "--copy-metadata",
-        "hightime",
-        "--collect-submodules",
-        "nidaqmx",
         "--collect-submodules",
         "pymodbus",
-        "--hidden-import",
-        "nidaqmx",
-        "--hidden-import",
-        "nidaqmx.system",
-        "--hidden-import",
-        "nidaqmx.constants",
-        "--hidden-import",
-        "nidaqmx.task",
-        "--hidden-import",
-        "nidaqmx.errors",
-        "--hidden-import",
-        "nidaqmx.stream_writers",
-        "--hidden-import",
-        "nidaqmx.stream_readers",
-        "--hidden-import",
-        "nitypes",
-        "--hidden-import",
-        "hightime",
         "--hidden-import",
         "pymodbus",
         "--hidden-import",
@@ -117,6 +80,8 @@ def pyinstaller_command() -> list[str]:
         "serial",
         "--hidden-import",
         "serial.tools.list_ports",
+        "--hidden-import",
+        "flow_ui.nidaqmx_lite",
         str(ROOT / "pump.py"),
     ]
     for module in EXCLUDE_MODULES:
@@ -140,8 +105,6 @@ def main() -> int:
             "pyinstaller",
         ]
     )
-
-    verify_nidaqmx_import()
     run(pyinstaller_command())
 
     exe_path = DIST / EXE_NAME
@@ -175,11 +138,10 @@ def main() -> int:
     print(f"ZIP : {zip_path}")
     print(f"SIZE: {size_mb:.1f} MB")
     print()
-    print("Industrial PC checklist:")
-    print("- Install NI-DAQmx Runtime 64-bit (MAX alone is not enough)")
-    print("- Copy the NEW PulseFlow.exe (not an old one)")
-    print("- Prefer local disk (C:\\PulseFlow) over OneDrive/Desktop for faster start")
-    print("- MP5Y COM default is COM9; change in Settings if needed")
+    print("Notes:")
+    print("- EXE no longer embeds Python nidaqmx/numpy (uses NI Runtime DLL)")
+    print("- Industrial PC still needs NI-DAQmx Runtime installed")
+    print("- Prefer C:\\PulseFlow over OneDrive/Desktop for faster start")
     return 0
 
 

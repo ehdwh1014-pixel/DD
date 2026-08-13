@@ -12,11 +12,12 @@ PulseFlow Industrial PC Deploy Guide
 
 Industrial PC requirements
 --------------------------
-- Install NI-DAQmx Runtime 64-bit (same bitness as PulseFlow.exe)
+- Install NI-DAQmx Runtime 64-bit (PulseFlow uses nicaiu.dll directly)
 - NI MAX must show cDAQ + NI 9264 / 9422 / 9477 modules
 - PulseFlow.exe must be built on a Windows PC with build_exe.bat
 - Prefer C:\PulseFlow (local disk) over OneDrive/Desktop for faster EXE start
 - Default MP5Y port is COM9 (change in Settings if needed)
+- Slim EXE: no Python nidaqmx/numpy bundled (smaller, faster start)
 
 Labels
 ------

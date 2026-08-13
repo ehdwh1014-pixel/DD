@@ -117,7 +117,7 @@ DO가 ON이면 White(SIG)가 0V로 당겨져 밸브에 **열림 명령**을 줍�
 ## 통신 장애 시 동작
 
 - **NI-DAQ 미연결:** AO/DO 제어와 피드백 운전을 시작할 수 없습니다.
-- 상태에 **`nidaqmx import 실패` / `패키지 없음`** 이 뜨면 NI MAX 문제가 아니라 **EXE 빌드 문제**입니다. Windows PC에서 `build_exe.bat`로 EXE를 **다시 만든 뒤** 산업용 PC에 복사하세요. (`--copy-metadata nidaqmx` 포함 빌드)
+- EXE는 Python `nidaqmx`/`numpy`를 포함하지 않고 **NI-DAQmx Runtime DLL(`nicaiu`)** 을 직접 호출합니다. 용량이 작고 실행이 빠릅니다. 산업용 PC에는 Runtime만 설치되어 있으면 됩니다.
 - NI MAX에서 장치가 보여도 앱이 끊기면 **장치명 불일치**일 수 있습니다. 앱은 9264/9422/9477 모듈 종류로 자동 매칭합니다.
 - **MP5Y/COM3 미연결:** 유량 PV가 필요한 피드백 운전만 정지합니다.
 - MP5Y가 끊겨도 NI-DAQ이 정상이면 레벨센서 자동 밸브 제어, 점화 DO, 메인 NG PUMP(AO1), I/O TEST의 REF.W(AO0)·DO0~2·AO2·DO5는 계속 사용할 수 있습니다.

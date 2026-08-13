@@ -12,11 +12,12 @@ PulseFlow 산업용 PC 배포 안내
 
 산업용 PC 필수 준비
 --------------------
-- NI-DAQmx Runtime 64-bit 설치 (PulseFlow.exe와 같은 64비트)
+- NI-DAQmx Runtime 64-bit 설치 (PulseFlow가 nicaiu.dll 직접 사용)
 - NI MAX에서 cDAQ + NI 9264 / 9422 / 9477 모듈 확인
 - PulseFlow.exe는 Windows PC에서 build_exe.bat 로 새로 빌드해서 복사
 - 실행은 OneDrive/바탕화면보다 C:\PulseFlow 같은 로컬 경로가 빠름
 - MP5Y 기본 COM은 COM9 (다르면 설정에서 변경)
+- EXE는 Python nidaqmx/numpy 미포함(용량↓, 실행↑)
 
 라벨
 ----
