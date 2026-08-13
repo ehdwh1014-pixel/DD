@@ -1,13 +1,17 @@
-"""PyInstaller hook: bundle nidaqmx + dependency metadata for one-file EXE."""
+"""PyInstaller hook: bundle only needed nidaqmx metadata/submodules."""
 
 from importlib.metadata import PackageNotFoundError
 
-from PyInstaller.utils.hooks import collect_all, copy_metadata
+from PyInstaller.utils.hooks import (
+    collect_submodules,
+    copy_metadata,
+)
 
-datas, binaries, hiddenimports = collect_all("nidaqmx")
+# Prefer submodule collection over collect_all to avoid shipping tests/docs.
+hiddenimports = collect_submodules("nidaqmx")
+datas = []
+binaries = []
 
-# nidaqmx (and some deps such as nitypes/hightime) call importlib.metadata
-# at runtime, so metadata must be bundled in one-file builds.
 for package in (
     "nidaqmx",
     "nitypes",
@@ -15,8 +19,19 @@ for package in (
     "tzlocal",
     "python-decouple",
     "requests",
+    "certifi",
+    "idna",
+    "urllib3",
+    "charset-normalizer",
 ):
     try:
         datas += copy_metadata(package)
     except PackageNotFoundError:
         pass
+
+# Drop test/doc packages if collect_submodules pulled them.
+hiddenimports = [
+    name
+    for name in hiddenimports
+    if ".tests" not in name and not name.endswith(".test")
+]

@@ -17,6 +17,34 @@ HOOKS = ROOT / "pyinstaller_hooks"
 EXE_NAME = "PulseFlow.exe"
 ZIP_NAME = "PulseFlow_deploy.zip"
 
+# Heavy / unused modules that inflate onefile size and slow cold start.
+EXCLUDE_MODULES = (
+    "matplotlib",
+    "scipy",
+    "pandas",
+    "PIL",
+    "cv2",
+    "IPython",
+    "jupyter",
+    "notebook",
+    "pytest",
+    "sphinx",
+    "grpc",
+    "grpcio",
+    "aiohttp",
+    "tornado",
+    "numpy.tests",
+    "numpy.f2py",
+    "numpy.distutils",
+    "nidaqmx.tests",
+    "pymodbus.server",
+    "pymodbus.simulator",
+    "tkinter.test",
+    "unittest",
+    "pydoc",
+    "doctest",
+)
+
 
 def run(command: list[str]) -> None:
     print(">", " ".join(command), flush=True)
@@ -55,9 +83,13 @@ def pyinstaller_command() -> list[str]:
         str(hooks_dir),
         "--copy-metadata",
         "nidaqmx",
-        "--collect-all",
+        "--copy-metadata",
+        "nitypes",
+        "--copy-metadata",
+        "hightime",
+        "--collect-submodules",
         "nidaqmx",
-        "--collect-all",
+        "--collect-submodules",
         "pymodbus",
         "--hidden-import",
         "nidaqmx",
@@ -74,6 +106,10 @@ def pyinstaller_command() -> list[str]:
         "--hidden-import",
         "nidaqmx.stream_readers",
         "--hidden-import",
+        "nitypes",
+        "--hidden-import",
+        "hightime",
+        "--hidden-import",
         "pymodbus",
         "--hidden-import",
         "pymodbus.client",
@@ -83,6 +119,8 @@ def pyinstaller_command() -> list[str]:
         "serial.tools.list_ports",
         str(ROOT / "pump.py"),
     ]
+    for module in EXCLUDE_MODULES:
+        command.extend(["--exclude-module", module])
     return command
 
 
@@ -111,6 +149,9 @@ def main() -> int:
         print(f"[ERROR] Missing {exe_path}")
         return 1
 
+    size_mb = exe_path.stat().st_size / (1024 * 1024)
+    print(f"EXE size: {size_mb:.1f} MB")
+
     if DEPLOY.exists():
         shutil.rmtree(DEPLOY)
     DEPLOY.mkdir(parents=True)
@@ -132,12 +173,13 @@ def main() -> int:
     print("BUILD OK")
     print(f"EXE : {exe_path}")
     print(f"ZIP : {zip_path}")
+    print(f"SIZE: {size_mb:.1f} MB")
     print()
     print("Industrial PC checklist:")
     print("- Install NI-DAQmx Runtime 64-bit (MAX alone is not enough)")
-    print("- Run the NEW PulseFlow.exe from this build")
-    print("- If status still says 'nidaqmx 패키지 없음', rebuild on Windows 64-bit Python")
-    print("- MP5Y COM port may differ from COM3 on a new PC (check Device Manager)")
+    print("- Copy the NEW PulseFlow.exe (not an old one)")
+    print("- Prefer local disk (C:\\PulseFlow) over OneDrive/Desktop for faster start")
+    print("- MP5Y COM default is COM9; change in Settings if needed")
     return 0
 
 

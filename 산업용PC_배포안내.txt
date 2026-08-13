@@ -15,8 +15,8 @@ PulseFlow 산업용 PC 배포 안내
 - NI-DAQmx Runtime 64-bit 설치 (PulseFlow.exe와 같은 64비트)
 - NI MAX에서 cDAQ + NI 9264 / 9422 / 9477 모듈 확인
 - PulseFlow.exe는 Windows PC에서 build_exe.bat 로 새로 빌드해서 복사
-  (옛 EXE는 "nidaqmx import 실패 / 패키지 없음" 으로 NI DAQ가 안 됨)
-- MP5Y COM 포트는 새 PC에서 COM3이 아닐 수 있음 (장치 관리자 확인)
+- 실행은 OneDrive/바탕화면보다 C:\PulseFlow 같은 로컬 경로가 빠름
+- MP5Y 기본 COM은 COM9 (다르면 설정에서 변경)
 
 라벨
 ----

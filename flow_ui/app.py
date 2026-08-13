@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import math
 import sys
+import threading
 import time
 import tkinter as tk
 from collections import deque
@@ -238,6 +239,12 @@ class FlowControlApp(tk.Tk):
         self.tc_name_vars: list[tk.StringVar] = []
         self.tc_value_labels: list[ttk.Label] = []
         self._last_tc_read_at = 0.0
+        self._tc_worker_busy = False
+        self._tc_pending_values: list[float] | None = None
+        self._tc_pending_error: str | None = None
+        self._tc_last_ui_values: list[str] = [""] * 10
+        self._tc_last_status_text = ""
+        self.TC_POLL_S = 2.0
 
         self._build_style()
         self._build_layout()
@@ -1559,7 +1566,41 @@ class FlowControlApp(tk.Tk):
         else:
             text = "NI 9214 미연결 · 연결 대기"
             color = COLORS["warn"]
+        if text == self._tc_last_status_text:
+            return
+        self._tc_last_status_text = text
         self.tc_status_label.configure(text=text, foreground=color)
+
+    def _apply_tc_ui_values(
+        self, values: list[float] | None = None, *, error: bool = False
+    ) -> None:
+        if not self.tc_value_labels:
+            return
+        for index, label in enumerate(self.tc_value_labels):
+            if label is None:
+                continue
+            if error:
+                text, color = "ERR", COLORS["bad"]
+            elif values is None:
+                text, color = "— °C", COLORS["muted"]
+            else:
+                text = f"{values[index]:.1f} °C"
+                color = COLORS["title"]
+            if self._tc_last_ui_values[index] == text:
+                continue
+            self._tc_last_ui_values[index] = text
+            label.configure(text=text, foreground=color)
+
+    def _tc_worker_read(self) -> None:
+        try:
+            values = self.daq.read_thermocouples()
+            self._tc_pending_values = values
+            self._tc_pending_error = None
+        except Exception as exc:  # noqa: BLE001 - keep UI loop alive
+            self._tc_pending_values = None
+            self._tc_pending_error = str(exc)
+        finally:
+            self._tc_worker_busy = False
 
     def _update_tc_monitor(self) -> None:
         if not (
@@ -1568,28 +1609,34 @@ class FlowControlApp(tk.Tk):
             and self._tc_popup.winfo_exists()
         ):
             return
+
+        # Apply background read results on the UI thread only.
+        if self._tc_pending_error is not None:
+            error = self._tc_pending_error
+            self._tc_pending_error = None
+            self._refresh_tc_status(error)
+            self._apply_tc_ui_values(error=True)
+        elif self._tc_pending_values is not None:
+            values = self._tc_pending_values
+            self._tc_pending_values = None
+            self._apply_tc_ui_values(values)
+            self._refresh_tc_status()
+
         now = time.monotonic()
-        if now - self._last_tc_read_at < 0.5:
+        if now - self._last_tc_read_at < self.TC_POLL_S:
+            return
+        if self._tc_worker_busy:
             return
         self._last_tc_read_at = now
         if not self.daq.tc_available:
             self._refresh_tc_status()
-            for label in self.tc_value_labels:
-                label.configure(text="— °C", foreground=COLORS["muted"])
-            return
-        try:
-            values = self.daq.read_thermocouples()
-        except DaqError as exc:
-            self._refresh_tc_status(str(exc))
-            for label in self.tc_value_labels:
-                label.configure(text="ERR", foreground=COLORS["bad"])
+            self._apply_tc_ui_values(None)
             return
 
-        for index, raw_value in enumerate(values):
-            self.tc_value_labels[index].configure(
-                text=f"{raw_value:.1f} °C", foreground=COLORS["title"]
-            )
-        self._refresh_tc_status()
+        self._tc_worker_busy = True
+        threading.Thread(
+            target=self._tc_worker_read, name="tc-reader", daemon=True
+        ).start()
 
     def _sync_tc_inputs(self, show_error: bool = True) -> bool:
         del show_error
@@ -1615,7 +1662,15 @@ class FlowControlApp(tk.Tk):
     def _close_tc_popup(self) -> None:
         self._sync_tc_inputs(show_error=False)
         self.tc_running = False
+        # Give the background reader a moment to finish before closing the task.
+        wait_until = time.monotonic() + 0.4
+        while self._tc_worker_busy and time.monotonic() < wait_until:
+            time.sleep(0.02)
         self.daq.close_thermocouples()
+        self._tc_pending_values = None
+        self._tc_pending_error = None
+        self._tc_last_ui_values = [""] * 10
+        self._tc_last_status_text = ""
         if self._tc_popup is not None and self._tc_popup.winfo_exists():
             self._tc_popup.destroy()
         self._tc_popup = None

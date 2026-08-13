@@ -19,6 +19,7 @@ Flow PV is read from Autonics MP5Y-25 over USB-RS485 (see mp5y_service.py).
 from __future__ import annotations
 
 from dataclasses import dataclass
+from threading import Lock
 
 
 CHASSIS = "cDAQ2"
@@ -128,6 +129,7 @@ class DaqService:
         self._do_spare_task = None
         self._tc_task = None
         self._tc_channels: tuple[str, str] | None = None
+        self._tc_lock = Lock()
         self._level_channel: str | None = None
         self._valve_channel: str | None = None
         self._flame_channel: str | None = None
@@ -260,47 +262,64 @@ class DaqService:
         if not (self.tc_available and self._nidaqmx):
             raise DaqError("NI 9214가 연결되지 않았습니다.")
         channels = (self.channels.tc_k_inputs, self.channels.tc_t_inputs)
-        try:
-            if self._tc_task is not None and self._tc_channels != channels:
-                self._close_tc_task()
-            if self._tc_task is None:
-                from nidaqmx.constants import (  # type: ignore
-                    CJCSource,
-                    TemperatureUnits,
-                    ThermocoupleType,
-                )
+        with self._tc_lock:
+            try:
+                if self._tc_task is not None and self._tc_channels != channels:
+                    self._close_tc_task_unlocked()
+                if self._tc_task is None:
+                    from nidaqmx.constants import (  # type: ignore
+                        AcquisitionType,
+                        CJCSource,
+                        TemperatureUnits,
+                        ThermocoupleType,
+                    )
 
-                task = self._nidaqmx.Task()
-                task.ai_channels.add_ai_thrmcpl_chan(
-                    self.channels.tc_k_inputs,
-                    min_val=-200.0,
-                    max_val=1200.0,
-                    units=TemperatureUnits.DEG_C,
-                    thermocouple_type=ThermocoupleType.K,
-                    cjc_source=CJCSource.BUILT_IN,
-                )
-                task.ai_channels.add_ai_thrmcpl_chan(
-                    self.channels.tc_t_inputs,
-                    min_val=-200.0,
-                    max_val=400.0,
-                    units=TemperatureUnits.DEG_C,
-                    thermocouple_type=ThermocoupleType.T,
-                    cjc_source=CJCSource.BUILT_IN,
-                )
-                self._tc_task = task
-                self._tc_channels = channels
-            values = self._tc_task.read()
-            if not isinstance(values, (list, tuple)):
-                values = [values]
-            result = [float(value) for value in values]
-            if len(result) != 10:
-                raise DaqError(f"TC 입력 개수 오류: {len(result)} (필요 10)")
-            return result
-        except Exception as exc:  # noqa: BLE001
-            self._close_tc_task()
-            if isinstance(exc, DaqError):
-                raise
-            raise DaqError(f"NI 9214 TC 읽기 오류: {exc}") from exc
+                    task = self._nidaqmx.Task()
+                    task.ai_channels.add_ai_thrmcpl_chan(
+                        self.channels.tc_k_inputs,
+                        min_val=-200.0,
+                        max_val=1200.0,
+                        units=TemperatureUnits.DEG_C,
+                        thermocouple_type=ThermocoupleType.K,
+                        cjc_source=CJCSource.BUILT_IN,
+                    )
+                    task.ai_channels.add_ai_thrmcpl_chan(
+                        self.channels.tc_t_inputs,
+                        min_val=-200.0,
+                        max_val=400.0,
+                        units=TemperatureUnits.DEG_C,
+                        thermocouple_type=ThermocoupleType.T,
+                        cjc_source=CJCSource.BUILT_IN,
+                    )
+                    # Prefer on-demand single samples for low UI impact.
+                    try:
+                        task.timing.cfg_samp_clk_timing(
+                            rate=1.0,
+                            sample_mode=AcquisitionType.ON_DEMAND,
+                        )
+                    except Exception:  # noqa: BLE001 - optional timing config
+                        pass
+                    self._tc_task = task
+                    self._tc_channels = channels
+                values = self._tc_task.read(number_of_samples_per_channel=1)
+                if not isinstance(values, (list, tuple)):
+                    values = [values]
+                result: list[float] = []
+                for value in values:
+                    if isinstance(value, (list, tuple)):
+                        if not value:
+                            continue
+                        result.append(float(value[0]))
+                    else:
+                        result.append(float(value))
+                if len(result) != 10:
+                    raise DaqError(f"TC 입력 개수 오류: {len(result)} (필요 10)")
+                return result
+            except Exception as exc:  # noqa: BLE001
+                self._close_tc_task_unlocked()
+                if isinstance(exc, DaqError):
+                    raise
+                raise DaqError(f"NI 9214 TC 읽기 오류: {exc}") from exc
 
     def read_levels(self) -> list[bool]:
         """Read [HIGH1, LOW1, HIGH2, LOW2, HIGH3, LOW3]."""
@@ -568,7 +587,7 @@ class DaqService:
             except Exception:  # noqa: BLE001
                 pass
 
-    def _close_tc_task(self) -> None:
+    def _close_tc_task_unlocked(self) -> None:
         task = self._tc_task
         self._tc_task = None
         self._tc_channels = None
@@ -577,6 +596,10 @@ class DaqService:
                 task.close()
             except Exception:  # noqa: BLE001
                 pass
+
+    def _close_tc_task(self) -> None:
+        with self._tc_lock:
+            self._close_tc_task_unlocked()
 
     def close_thermocouples(self) -> None:
         """Release the optional NI 9214 task without affecting other I/O."""
