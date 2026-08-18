@@ -12,6 +12,7 @@ Input registers (Func 04):
 from __future__ import annotations
 
 import math
+import os
 import random
 import time
 from dataclasses import dataclass
@@ -82,7 +83,25 @@ class Mp5yService:
         self._last_dot = 0
         self._sim_started = time.monotonic()
 
+    def _simulation_enabled(self) -> bool:
+        return os.environ.get("PULSEFLOW_SIM", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+
     def check_connection(self) -> bool:
+        if self._simulation_enabled():
+            flow, hz, raw, dot = self._simulate()
+            self._last_flow, self._last_hz = flow, hz
+            self._last_raw, self._last_dot = raw, dot
+            self.available = True
+            self.error = "시뮬레이션 모드"
+            self.device_summary = (
+                f"MP5Y-25 시뮬레이션 {self.config.port} addr={self.config.slave_id}"
+            )
+            return True
         try:
             self._ensure_client()
             flow, hz, raw, dot = self._read_pv_once()
@@ -105,6 +124,8 @@ class Mp5yService:
 
     def port_present(self) -> bool:
         """Return whether the configured serial port is enumerated by Windows."""
+        if self._simulation_enabled():
+            return True
         try:
             from serial.tools import list_ports
 
@@ -120,6 +141,8 @@ class Mp5yService:
         """Return (flow_ccpm, frequency_hz_or_nan, raw_int, dot)."""
         if pulse_ml is not None:
             self.config.pulse_ml = pulse_ml
+        if self._simulation_enabled():
+            return self._simulate()
 
         try:
             flow, hz, raw, dot = self._read_pv_once()

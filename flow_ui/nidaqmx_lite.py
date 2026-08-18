@@ -6,6 +6,8 @@ operations required by PulseFlow. This keeps the frozen EXE much smaller.
 
 from __future__ import annotations
 
+import os
+import re
 import sys
 import ctypes
 from ctypes import (
@@ -43,6 +45,38 @@ DAQmx_Val_BuiltIn = 10200
 
 class DaqmxLiteError(RuntimeError):
     """Raised when a NI-DAQmx C API call fails."""
+
+
+def simulation_enabled() -> bool:
+    return os.environ.get("PULSEFLOW_SIM", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def expand_channel_lines(spec: str) -> list[str]:
+    """Expand `.../line0:5` or `.../ai0:4` into individual channel names."""
+    spec = (spec or "").strip()
+    if not spec:
+        return []
+    last = spec.rsplit("/", 1)[-1]
+    if ":" not in last:
+        return [spec]
+    head, end_text = spec.rsplit(":", 1)
+    match = re.match(r"^(.*?)(\d+)$", head)
+    if not match:
+        return [spec]
+    try:
+        end = int(end_text)
+    except ValueError:
+        return [spec]
+    prefix, start_text = match.group(1), match.group(2)
+    start = int(start_text)
+    if end < start:
+        start, end = end, start
+    return [f"{prefix}{index}" for index in range(start, end + 1)]
 
 
 @dataclass
@@ -341,3 +375,120 @@ class DaqmxLite:
             )
         )
         return [float(data[i]) for i in range(channel_count)]
+
+
+class FakeTask:
+    """In-memory NI task used by FakeDaqmx."""
+
+    def __init__(self, ident: int) -> None:
+        self.value = ident
+        self.kind = ""
+        self.channel = ""
+
+
+class FakeDaqmx:
+    """Software stand-in for DaqmxLite so UI/control can be tested without hardware."""
+
+    def __init__(self) -> None:
+        self.devices = {
+            "cDAQ2": DeviceInfo("cDAQ2", "cDAQ-9178"),
+            "cDAQ2Mod1": DeviceInfo("cDAQ2Mod1", "NI 9264"),
+            "cDAQ2Mod2": DeviceInfo("cDAQ2Mod2", "NI 9422"),
+            "cDAQ2Mod3": DeviceInfo("cDAQ2Mod3", "NI 9477"),
+            "cDAQ2Mod4": DeviceInfo("cDAQ2Mod4", "NI 9214"),
+        }
+        self.ao: dict[str, float] = {}
+        self.do: dict[str, bool] = {}
+        self.di: dict[str, bool] = {}
+        self.tc = [25.0] * 10
+        self._next_id = 1
+        self._tasks: dict[int, FakeTask] = {}
+
+    def list_devices(self) -> dict[str, DeviceInfo]:
+        return dict(self.devices)
+
+    def get_product_type(self, device_name: str) -> str:
+        info = self.devices.get(device_name)
+        return info.product_type if info else ""
+
+    def create_task(self) -> FakeTask:
+        task = FakeTask(self._next_id)
+        self._next_id += 1
+        self._tasks[task.value] = task
+        return task
+
+    def clear_task(self, handle: FakeTask | None) -> None:
+        if handle is None:
+            return
+        self._tasks.pop(int(handle.value), None)
+
+    def _task(self, handle: FakeTask) -> FakeTask:
+        return self._tasks.setdefault(int(handle.value), handle)
+
+    def create_ao_voltage(self, handle: FakeTask, channel: str) -> None:
+        task = self._task(handle)
+        task.kind = "ao"
+        task.channel = channel
+        self.ao.setdefault(channel, 0.0)
+
+    def write_ao_voltage(self, handle: FakeTask, voltage: float) -> None:
+        task = self._task(handle)
+        channel = task.channel or "ao"
+        self.ao[channel] = float(voltage)
+
+    def create_di_lines(self, handle: FakeTask, lines: str) -> None:
+        task = self._task(handle)
+        task.kind = "di"
+        task.channel = lines
+        for name in expand_channel_lines(lines):
+            self.di.setdefault(name, False)
+
+    def create_do_lines(self, handle: FakeTask, lines: str) -> None:
+        task = self._task(handle)
+        task.kind = "do"
+        task.channel = lines
+        for name in expand_channel_lines(lines):
+            self.do.setdefault(name, False)
+
+    def read_digital_lines(self, handle: FakeTask, line_count: int) -> list[bool]:
+        task = self._task(handle)
+        names = expand_channel_lines(task.channel)
+        values = [bool(self.di.get(name, False)) for name in names]
+        if len(values) < line_count:
+            values.extend([False] * (line_count - len(values)))
+        return values[:line_count]
+
+    def write_digital_lines(self, handle: FakeTask, values: list[bool]) -> None:
+        task = self._task(handle)
+        names = expand_channel_lines(task.channel)
+        for name, value in zip(names, values):
+            self.do[name] = bool(value)
+
+    def create_ai_thermocouple(
+        self,
+        handle: FakeTask,
+        channels: str,
+        *,
+        tc_type: int,
+        min_val: float,
+        max_val: float,
+    ) -> None:
+        task = self._task(handle)
+        task.kind = "tc"
+        existing = task.channel
+        task.channel = channels if not existing else f"{existing},{channels}"
+
+    def read_analog(self, handle: FakeTask, channel_count: int) -> list[float]:
+        if len(self.tc) < channel_count:
+            self.tc.extend([25.0] * (channel_count - len(self.tc)))
+        return [float(value) for value in self.tc[:channel_count]]
+
+    def set_di(self, channel: str, on: bool) -> None:
+        self.di[channel] = bool(on)
+
+    def valve_bits(self) -> list[bool]:
+        return [
+            bool(self.do.get("cDAQ2Mod3/port0/line0", False)),
+            bool(self.do.get("cDAQ2Mod3/port0/line1", False)),
+            bool(self.do.get("cDAQ2Mod3/port0/line2", False)),
+        ]

@@ -129,6 +129,15 @@ DO0~2와 **동일 SINK 배선**. I/O TEST에서 수동 ON/OFF합니다.
 - MP5Y가 끊겨도 NI-DAQ이 정상이면 레벨센서 자동 밸브 제어, 점화 DO, 메인 NG PUMP(AO1), I/O TEST의 AO2·DO4·DO5는 계속 사용할 수 있습니다.
 - 상태 표시는 `COM3 미연결`, `COM3 연결 · 응답 없음`, `통신 ON`을 구분합니다. COM3 포트가 보인다는 사실만으로 MP5Y Modbus 응답까지 정상이라고 판단하지 않습니다.
 
+## 소프트웨어 시뮬레이션 (하드웨어 없이)
+
+환경변수 `PULSEFLOW_SIM=1` 이면 NI DAQ/MP5Y를 가상으로 연결합니다. **산업용 PC 실운전에서는 설정하지 마세요.**
+
+```
+set PULSEFLOW_SIM=1
+python -m flow_ui.app
+```
+
 ## TC MONITORING (선택 NI 9214)
 
 - NI 9214를 사용하지 않을 때는 연결하지 않아도 기존 AO/DI/DO와 MP5Y 제어가 정상 동작합니다.

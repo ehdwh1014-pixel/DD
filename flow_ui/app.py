@@ -1843,9 +1843,15 @@ class FlowControlApp(tk.Tk):
             data: dict[str, object] = {}
             if self.SETTINGS_PATH.exists():
                 try:
-                    data = json.loads(self.SETTINGS_PATH.read_text(encoding="utf-8"))
-                except (OSError, json.JSONDecodeError):
-                    data = {}
+                    loaded = json.loads(self.SETTINGS_PATH.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError) as exc:
+                    messagebox.showerror(
+                        "저장 실패",
+                        f"기존 settings.json을 읽지 못해 덮어쓰지 않았습니다: {exc}",
+                    )
+                    return
+                if isinstance(loaded, dict):
+                    data = loaded
             data["valve_names"] = self.valve_names
             self.SETTINGS_PATH.write_text(
                 json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
@@ -2308,8 +2314,16 @@ class FlowControlApp(tk.Tk):
         if not connected:
             self.status_on = False
             self._paint_status_lamp(COLORS["bad"], outline="#9B2C2C")
+        if getattr(self.daq, "simulated", False):
+            text = f"시뮬레이션 모드 · {text}"
         self.status_label.configure(text=text)
-        self.after(2000, self.refresh_connection)
+        job = getattr(self, "_refresh_job", None)
+        if job is not None:
+            try:
+                self.after_cancel(job)
+            except Exception:  # noqa: BLE001
+                pass
+        self._refresh_job = self.after(2000, self.refresh_connection)
 
     def _blink_status_lamp(self) -> None:
         """Blink the large DAQ/link lamp so connection state is obvious."""
@@ -2356,6 +2370,7 @@ class FlowControlApp(tk.Tk):
         self.mp5y_canvas.itemconfigure(self.mp5y_lamp, fill=color, outline=outline)
         if getattr(self, "mp5y_status_label", None) is not None:
             self.mp5y_status_label.configure(text=text)
+
     def update_loop(self) -> None:
         daq_failed = False
         try:
@@ -2788,6 +2803,13 @@ class FlowControlApp(tk.Tk):
         try:
             self.feedback_running = False
             self.level_running = False
+            for attr in ("_refresh_job",):
+                job = getattr(self, attr, None)
+                if job is not None:
+                    try:
+                        self.after_cancel(job)
+                    except Exception:  # noqa: BLE001
+                        pass
             self.daq.close()
             self.mp5y.close()
         finally:

@@ -22,6 +22,8 @@ from flow_ui.nidaqmx_lite import (
     DaqmxLite,
     DaqmxLiteError,
     DeviceInfo,
+    FakeDaqmx,
+    simulation_enabled,
 )
 
 
@@ -146,8 +148,14 @@ class DaqService:
         self._last_inverter = False
         self._last_spare_do4 = False
         self._last_spare_do = False
+        self.simulated = False
         try:
-            self._daq = DaqmxLite()
+            if simulation_enabled():
+                self._daq = FakeDaqmx()
+                self.simulated = True
+                self.error = "시뮬레이션 모드"
+            else:
+                self._daq = DaqmxLite()
         except DaqmxLiteError as exc:
             self.error = f"NI-DAQmx Runtime 없음 (시뮬레이션). {exc}"
 
