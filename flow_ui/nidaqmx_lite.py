@@ -29,11 +29,13 @@ int32 = c_int32
 uInt32 = c_uint32
 uInt8 = c_uint8
 
-# Selected constants from NIDAQmx.h
+# Selected constants from NIDAQmx.h (must match NI-DAQmx, not zero!)
 DAQmx_Val_Volts = 10348
 DAQmx_Val_DegC = 10143
-DAQmx_Val_GroupByChannel = 0
-DAQmx_Val_ChanPerLine = 0
+DAQmx_Val_ChanPerLine = 1030
+DAQmx_Val_ChanForAllLines = 1031
+DAQmx_Val_GroupByScanNumber = 1040
+DAQmx_Val_GroupByChannel = 1041
 DAQmx_Val_ThermocoupleType_K = 10073
 DAQmx_Val_ThermocoupleType_T = 10086
 DAQmx_Val_BuiltIn = 10200
@@ -65,6 +67,7 @@ class DaqmxLite:
 
     def __init__(self) -> None:
         self._dll = _load_dll()
+        self._started_tasks: set[int] = set()
         self._configure()
 
     def _configure(self) -> None:
@@ -203,6 +206,8 @@ class DaqmxLite:
     def clear_task(self, handle: TaskHandle | None) -> None:
         if handle is None:
             return
+        key = int(handle.value or 0)
+        self._started_tasks.discard(key)
         try:
             self._dll.DAQmxClearTask(handle)
         except Exception:  # noqa: BLE001
@@ -252,7 +257,15 @@ class DaqmxLite:
             )
         )
 
+    def _ensure_task_started(self, handle: TaskHandle) -> None:
+        key = int(handle.value or 0)
+        if key in self._started_tasks:
+            return
+        self._check(self._dll.DAQmxStartTask(handle))
+        self._started_tasks.add(key)
+
     def read_digital_lines(self, handle: TaskHandle, line_count: int) -> list[bool]:
+        self._ensure_task_started(handle)
         data = (uInt8 * line_count)()
         samps = int32(0)
         bytes_per = int32(0)
@@ -272,6 +285,7 @@ class DaqmxLite:
         return [bool(data[i]) for i in range(line_count)]
 
     def write_digital_lines(self, handle: TaskHandle, values: list[bool]) -> None:
+        self._ensure_task_started(handle)
         data = (uInt8 * len(values))(*[1 if value else 0 for value in values])
         written = int32(0)
         self._check(

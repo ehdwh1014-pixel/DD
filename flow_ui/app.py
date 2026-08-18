@@ -2539,22 +2539,31 @@ class FlowControlApp(tk.Tk):
         if self.io_test_active:
             self.level_master_status.configure(text="I/O TEST · 레벨 자동제어 일시정지")
             return
-        values = self.daq.read_levels()
-        roles = (ValveRole.SUPPLY, ValveRole.DRAIN, ValveRole.DRAIN)
-        decisions = []
-        commands = []
-        for index, role in enumerate(roles):
-            high = values[index * 2]
-            low = values[index * 2 + 1]
-            decision = decide_valve(role, high, low, self.valve_commands[index])
-            decisions.append(decision)
-            commands.append(decision.opened)
-        self.valve_commands = self.daq.write_valves(commands)
-        self._render_level_states(values, [decision.state for decision in decisions])
-        if any(decision.fault for decision in decisions):
-            self.level_master_status.configure(text="센서 충돌 · 안전 닫힘")
-        else:
-            self.level_master_status.configure(text="자동 제어 중")
+        try:
+            values = self.daq.read_levels()
+            roles = (ValveRole.SUPPLY, ValveRole.DRAIN, ValveRole.DRAIN)
+            decisions = []
+            commands = []
+            for index, role in enumerate(roles):
+                high = values[index * 2]
+                low = values[index * 2 + 1]
+                decision = decide_valve(role, high, low, self.valve_commands[index])
+                decisions.append(decision)
+                commands.append(decision.opened)
+            self.valve_commands = self.daq.write_valves(commands)
+            self._render_level_states(values, [decision.state for decision in decisions])
+            if any(decision.fault for decision in decisions):
+                self.level_master_status.configure(text="센서 충돌 · 안전 닫힘")
+            else:
+                self.level_master_status.configure(text="자동 제어 중")
+        except DaqError as exc:
+            self.level_master_status.configure(
+                text=f"레벨 I/O 오류 · {exc} · 재시도"
+            )
+        except Exception as exc:  # noqa: BLE001
+            self.level_master_status.configure(
+                text=f"레벨 루프 오류 · {exc} · 재시도"
+            )
 
     def _refresh_control_start_label(self) -> None:
         if getattr(self, "control_start_label", None) is None:
