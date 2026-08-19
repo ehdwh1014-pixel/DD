@@ -28,7 +28,7 @@ if __package__ in (None, ""):
 from flow_ui.control import LowPassFilter, PIController
 from flow_ui.daq_service import ChannelConfig, DaqError, DaqService
 from flow_ui.flow_math import DEFAULT_PULSE_ML
-from flow_ui.level_control import ValveRole, decide_valve
+from flow_ui.level_control import SensorType, ValveRole, decide_valve
 from flow_ui.mp5y_service import Mp5yConfig, Mp5yError, Mp5yService
 
 
@@ -244,6 +244,7 @@ class FlowControlApp(tk.Tk):
             tk.StringVar(value=name) for name in self.valve_names
         ]
         self.valve_do_labels: list[ttk.Label] = []
+        self.valve_sensor_types = [SensorType.FOUR_POINT, SensorType.TWO_POINT, SensorType.TWO_POINT]
         self._last_tc_read_at = 0.0
         self._tc_worker_busy = False
         self._tc_pending_values: list[float] | None = None
@@ -2562,7 +2563,10 @@ class FlowControlApp(tk.Tk):
             for index, role in enumerate(roles):
                 high = values[index * 2]
                 low = values[index * 2 + 1]
-                decision = decide_valve(role, high, low, self.valve_commands[index])
+                decision = decide_valve(
+                    role, high, low, self.valve_commands[index],
+                    sensor_type=self.valve_sensor_types[index],
+                )
                 decisions.append(decision)
                 commands.append(decision.opened)
             self.valve_commands = self.daq.write_valves(commands)
@@ -2726,6 +2730,7 @@ class FlowControlApp(tk.Tk):
             "tc_t_inputs": self.channels.tc_t_inputs,
             "tc_names": self.tc_names,
             "valve_names": self.valve_names,
+            "valve_sensor_types": [st.value for st in self.valve_sensor_types],
             "mp5y_port": self.mp5y_config.port,
             "mp5y_slave_id": self.mp5y_config.slave_id,
             "mp5y_baudrate": self.mp5y_config.baudrate,
@@ -2789,6 +2794,12 @@ class FlowControlApp(tk.Tk):
             for index, name in enumerate(self.valve_names):
                 if index < len(self.valve_name_vars):
                     self.valve_name_vars[index].set(name)
+        vst = data.get("valve_sensor_types")
+        if isinstance(vst, list) and len(vst) == 3:
+            mapping = {t.value: t for t in SensorType}
+            self.valve_sensor_types = [
+                mapping.get(str(v), SensorType.TWO_POINT) for v in vst
+            ]
         self.daq.channels = self.channels
         self._refresh_ng_ao_label()
         self.mp5y_config.port = str(data.get("mp5y_port", "COM9"))
