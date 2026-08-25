@@ -6,7 +6,7 @@ import unittest
 
 from flow_ui.control import LowPassFilter, PIController
 from flow_ui.flow_math import frequency_to_ccpm, pulses_to_ccpm
-from flow_ui.level_control import ValveRole, decide_valve
+from flow_ui.level_control import SensorType, ValveRole, decide_valve
 from flow_ui.mp5y_service import Mp5yConfig, Mp5yService
 
 
@@ -52,7 +52,7 @@ class Mp5yDecodeTests(unittest.TestCase):
         self.assertEqual(service._decode_pv(0x0486, 0x0F00), service._decode_s16(0x0486))
 
     def test_simulate_returns_positive_flow(self) -> None:
-        service = Mp5yService(Mp5yConfig(port="COM3", value_mode="flow_ccpm"))
+        service = Mp5yService(Mp5yConfig(port="COM9", value_mode="flow_ccpm"))
         flow, hz, raw, dot = service.simulate_flow()
         self.assertGreater(flow, 0.0)
         self.assertGreater(hz, 0.0)
@@ -74,6 +74,22 @@ class LevelControlTests(unittest.TestCase):
         collision = decide_valve(ValveRole.DRAIN, True, True, True)
         self.assertFalse(collision.opened)
         self.assertTrue(collision.fault)
+
+    def test_four_point_supply_both_on_closes(self) -> None:
+        # 4접점: H ON + L ON = 고수위 → 급수 닫힘 (충돌 아님)
+        d = decide_valve(ValveRole.SUPPLY, True, True, True, SensorType.FOUR_POINT)
+        self.assertFalse(d.opened)
+        self.assertFalse(d.fault)
+
+    def test_four_point_supply_only_low_opens(self) -> None:
+        # 4접점: H OFF + L ON = 저수위 → 급수 열림
+        d = decide_valve(ValveRole.SUPPLY, False, True, False, SensorType.FOUR_POINT)
+        self.assertTrue(d.opened)
+
+    def test_four_point_supply_neither_opens(self) -> None:
+        # 4접점: 둘 다 OFF = 매우 저수위 → 급수 열림
+        d = decide_valve(ValveRole.SUPPLY, False, False, False, SensorType.FOUR_POINT)
+        self.assertTrue(d.opened)
 
 
 if __name__ == "__main__":
