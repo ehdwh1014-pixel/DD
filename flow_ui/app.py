@@ -1116,7 +1116,7 @@ class FlowControlApp(tk.Tk):
         self.level_logic_labels = []
         self.valve_do_labels = []
         rules = (
-            "L열림 / H닫힘",
+            "4접점 · L열림 / H닫힘",
             "L닫힘 / H열림",
             "L닫힘 / H열림",
         )
@@ -1937,14 +1937,13 @@ class FlowControlApp(tk.Tk):
             "  NG PUMP 신호 입력 →  NI 9264 ao1\n"
             "  NG PUMP COM       →  AO COM\n"
             "\n"
-            "【레벨센서 3개 → NI 9422】\n"
-            "  센서 Black(24V COM) → PSU +24V\n"
-            "  센서1 Red(HIGH) → DI0+ / White(LOW) → DI1+\n"
-            "  센서2 Red(HIGH) → DI2+ / White(LOW) → DI3+\n"
-            "  센서3 Red(HIGH) → DI4+ / White(LOW) → DI5+\n"
+            "【레벨센서 → NI 9422】\n"
+            "  급수(4접점 DFR): COM(백) 공통, H(황)→DI0+, L(청)→DI1+\n"
+            "    ※ HH/LL 미사용. H ON이면 L도 ON → 고수위(충돌 아님)\n"
+            "  배수2(2접점): HIGH→DI2+ / LOW→DI3+\n"
+            "  배수3(2접점): HIGH→DI4+ / LOW→DI5+\n"
             "  DI0−~DI5− → PSU 0V\n"
             "  접점 ON 시 DI+–DI−에 24V → 입력 ON\n"
-            "  ※ 접점 N/O·N/C 방향은 현장에서 ON 표시로 확인\n"
             "\n"
             "【전동볼밸브 3개 → NI 9477 (싱킹 출력)】\n"
             "  밸브 Red(+24V) → PSU +24V\n"
