@@ -168,57 +168,24 @@ class Mp5yService:
     def _ensure_client(self) -> None:
         if self._client is not None:
             return
+        from flow_ui.modbus_rtu import ModbusRtuClient, ModbusRtuError
+
+        client = ModbusRtuClient(
+            self.config.port,
+            baudrate=self.config.baudrate,
+            parity=self.config.parity,
+            stopbits=self.config.stopbits,
+            bytesize=self.config.bytesize,
+            timeout_s=self.config.timeout_s,
+        )
         try:
-            from pymodbus.client import ModbusSerialClient
-        except ImportError as exc:
-            raise Mp5yError("pymodbus / pyserial 패키지가 필요합니다.") from exc
-
-        base: dict[str, object] = {
-            "port": self.config.port,
-            "baudrate": self.config.baudrate,
-            "parity": self.config.parity,
-            "stopbits": self.config.stopbits,
-            "bytesize": self.config.bytesize,
-            "timeout": self.config.timeout_s,
-        }
-        client = None
-        last_exc: Exception | None = None
-        # Try modern FramerType, then legacy method='rtu', then bare kwargs.
-        attempts: list[dict[str, object]] = [dict(base)]
-        try:
-            from pymodbus import FramerType  # type: ignore
-
-            modern = dict(base)
-            modern["framer"] = FramerType.RTU
-            attempts.insert(0, modern)
-        except Exception:  # noqa: BLE001
-            legacy = dict(base)
-            legacy["method"] = "rtu"
-            attempts.insert(0, legacy)
-
-        for kwargs in attempts:
-            try:
-                candidate = ModbusSerialClient(**kwargs)
-                if not candidate.connect():
-                    try:
-                        candidate.close()
-                    except Exception:  # noqa: BLE001
-                        pass
-                    last_exc = Mp5yError(f"{self.config.port} 연결 실패")
-                    continue
-                client = candidate
-                break
-            except TypeError as exc:
-                last_exc = exc
-                continue
-            except Exception as exc:  # noqa: BLE001
-                last_exc = exc
-                continue
-
-        if client is None:
-            raise Mp5yError(str(last_exc) if last_exc else f"{self.config.port} 연결 실패")
-        # USB-RS485 adapters often need a short settle before the first RTU frame.
-        time.sleep(0.08)
+            client.connect()
+        except ModbusRtuError as exc:
+            client.close()
+            raise Mp5yError(str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001
+            client.close()
+            raise Mp5yError(f"{self.config.port} 연결 실패: {exc}") from exc
         self._client = client
 
     def _close_client(self) -> None:
@@ -231,30 +198,9 @@ class Mp5yService:
         except Exception:  # noqa: BLE001
             pass
 
-    def _read_input_registers(self, address: int, count: int):
-        assert self._client is not None
-        # pymodbus renamed slave= → device_id= across 3.7/3.8.
-        try:
-            return self._client.read_input_registers(
-                address=address,
-                count=count,
-                device_id=self.config.slave_id,
-            )
-        except TypeError:
-            try:
-                return self._client.read_input_registers(
-                    address=address,
-                    count=count,
-                    slave=self.config.slave_id,
-                )
-            except TypeError:
-                return self._client.read_input_registers(
-                    address,
-                    count,
-                    self.config.slave_id,
-                )
-
     def _read_pv_once(self) -> tuple[float, float, int, int]:
+        from flow_ui.modbus_rtu import ModbusRtuError
+
         self._ensure_client()
         assert self._client is not None
         # Prefer PV+DOT+UNIT+MODE (5 regs). Fall back to PV+DOT if meter rejects.
@@ -262,20 +208,23 @@ class Mp5yService:
         regs: list[int] | None = None
         for count in (5, 3):
             try:
-                result = self._read_input_registers(self.config.pv_address, count)
-                if result is None or result.isError():
-                    last_error = Mp5yError(f"Modbus 응답 오류: {result}")
-                    continue
-                regs = list(result.registers)
+                regs = self._client.read_input_registers(
+                    self.config.slave_id, self.config.pv_address, count
+                )
                 if len(regs) < 3:
                     last_error = Mp5yError(f"레지스터 부족: {regs}")
                     regs = None
                     continue
                 break
-            except Exception as exc:  # noqa: BLE001
+            except (ModbusRtuError, Mp5yError) as exc:
                 last_error = exc
                 regs = None
                 # Re-open port once; some adapters drop the first frame after connect.
+                self._close_client()
+                self._ensure_client()
+            except Exception as exc:  # noqa: BLE001
+                last_error = exc
+                regs = None
                 self._close_client()
                 self._ensure_client()
         if regs is None:

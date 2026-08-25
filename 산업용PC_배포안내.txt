@@ -23,7 +23,8 @@ PulseFlow 산업용 PC 배포 안내
 ----
 - AO0 = REF.W
 - AO1 = NG PUMP
-- I/O TEST = AO2(0~5V) + DO5(SINK ON/OFF) 전용
+- I/O TEST = AO2(0~5V) + DO0~2 밸브 수동
+- Coolint P(DO4) = 메인 UI ON/OFF
 - NG PUMP는 메인 화면에서 제어
 
 소스 ZIP (GitHub)

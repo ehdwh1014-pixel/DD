@@ -23,7 +23,8 @@ Labels
 ------
 - AO0 = REF.W
 - AO1 = NG PUMP
-- I/O TEST = AO2 (0~5V) + DO5 (SINK ON/OFF) only
+- I/O TEST = AO2 (0~5V) + DO0~2 valve manual
+- Coolint P (DO4) = main UI ON/OFF
 - NG PUMP is controlled on the main UI
 
 GitHub source ZIP

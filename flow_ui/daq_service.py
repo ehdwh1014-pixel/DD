@@ -4,7 +4,7 @@ Hardware (NI MAX):
   Chassis : cDAQ-9178 -> cDAQ2
   Slot 1  : NI 9264   -> cDAQ2Mod1  (REF.W ao0 + NG PUMP ao1 + spare ao2)
   Slot 2  : NI 9422   -> cDAQ2Mod2  (three HIGH/LOW level inputs, DI0..DI5)
-  Slot 3  : NI 9477   -> cDAQ2Mod3  (valves DO0..2, igniter DO3, spare DO4/DO5)
+  Slot 3  : NI 9477   -> cDAQ2Mod3  (valves DO0..2, igniter DO3, Coolint P DO4)
   Slot 4  : NI 9214   -> cDAQ2Mod4  (optional TC: K ai0..4, T ai5..9)
 
 Uses a lightweight ctypes wrapper (flow_ui.nidaqmx_lite) so the frozen EXE
@@ -76,12 +76,10 @@ class ChannelConfig:
     spare_ao: str = f"{AO_MODULE}/ao2"
     level_inputs: str = f"{DI_MODULE}/port0/line0:5"
     valve_outputs: str = f"{DO_MODULE}/port0/line0:2"
-    flame_input: str = f"{DI_MODULE}/port0/line6"
     igniter_output: str = f"{DO_MODULE}/port0/line3"
-    # DO4 is a spare sink valve (same electrical style as DO0..2), not inverter FX.
+    # DO4 Coolint P (24 V 2-wire pump / SINK), not inverter FX.
     spare_do4: str = f"{DO_MODULE}/port0/line4"
-    spare_do: str = f"{DO_MODULE}/port0/line5"
-    # Optional inverter FX channel. Empty = unused (DO4 is free for a valve).
+    # Optional inverter FX channel. Empty = unused (DO4 is free for Coolint P).
     inverter_run: str = ""
     tc_k_inputs: str = f"{TC_MODULE}/ai0:4"
     tc_t_inputs: str = f"{TC_MODULE}/ai5:9"
@@ -101,12 +99,10 @@ def apply_module_names(
         channels.spare_ao = f"{ao}/ao2"
     if di:
         channels.level_inputs = f"{di}/port0/line0:5"
-        channels.flame_input = f"{di}/port0/line6"
     if do:
         channels.valve_outputs = f"{do}/port0/line0:2"
         channels.igniter_output = f"{do}/port0/line3"
         channels.spare_do4 = f"{do}/port0/line4"
-        channels.spare_do = f"{do}/port0/line5"
     if tc:
         channels.tc_k_inputs = f"{tc}/ai0:4"
         channels.tc_t_inputs = f"{tc}/ai5:9"
@@ -128,26 +124,21 @@ class DaqService:
         self._ao_tasks: dict[str, object] = {}
         self._di_task = None
         self._do_task = None
-        self._di_flame_task = None
         self._do_igniter_task = None
         self._do_inverter_task = None
         self._do_spare4_task = None
-        self._do_spare_task = None
         self._tc_task = None
         self._tc_channels: tuple[str, str] | None = None
         self._tc_lock = Lock()
         self._level_channel: str | None = None
         self._valve_channel: str | None = None
-        self._flame_channel: str | None = None
         self._igniter_channel: str | None = None
         self._inverter_channel: str | None = None
         self._spare_do4_channel: str | None = None
-        self._spare_do_channel: str | None = None
         self._last_valves = [False, False, False]
         self._last_igniter = False
         self._last_inverter = False
         self._last_spare_do4 = False
-        self._last_spare_do = False
         self.simulated = False
         try:
             if simulation_enabled():
@@ -162,11 +153,9 @@ class DaqService:
     def _reset_io_tasks(self) -> None:
         self._close_di_task()
         self._close_do_task()
-        self._close_di_flame_task()
         self._close_do_igniter_task()
         self._close_do_inverter_task()
         self._close_do_spare4_task()
-        self._close_do_spare_task()
         self._close_tc_task()
         self._close_ao_task()
 
@@ -316,6 +305,9 @@ class DaqService:
         if not (self.level_available and self._daq):
             self._last_valves = values
             return values
+        # Skip DAQ write when commanded state is unchanged (reduces DO bus traffic).
+        if values == self._last_valves and self._do_task is not None:
+            return values
         try:
             if self._do_task is not None and self._valve_channel != self.channels.valve_outputs:
                 self._close_do_task()
@@ -330,23 +322,6 @@ class DaqService:
         except Exception as exc:  # noqa: BLE001
             self._close_do_task()
             raise DaqError(f"밸브 출력 오류: {exc}") from exc
-
-    def read_flame(self) -> bool:
-        if not (self.level_available and self._daq):
-            return False
-        try:
-            if self._di_flame_task is not None and self._flame_channel != self.channels.flame_input:
-                self._close_di_flame_task()
-            if self._di_flame_task is None:
-                task = self._daq.create_task()
-                self._daq.create_di_lines(task, self.channels.flame_input)
-                self._di_flame_task = task
-                self._flame_channel = self.channels.flame_input
-            values = self._daq.read_digital_lines(self._di_flame_task, 1)
-            return bool(values[0]) if values else False
-        except Exception as exc:  # noqa: BLE001
-            self._close_di_flame_task()
-            raise DaqError(f"화염 DI 읽기 오류: {exc}") from exc
 
     def write_igniter(self, on: bool) -> bool:
         on = bool(on)
@@ -397,7 +372,7 @@ class DaqService:
             raise DaqError(f"인버터 RUN 출력 오류: {exc}") from exc
 
     def write_spare_do4(self, on: bool) -> bool:
-        """Spare valve DO4 SINK: True=ON, False=OFF (same wiring as DO0–2)."""
+        """Coolint P DO4 SINK: True=ON, False=OFF."""
         on = bool(on)
         if not (self.level_available and self._daq):
             self._last_spare_do4 = on
@@ -419,29 +394,6 @@ class DaqService:
         except Exception as exc:  # noqa: BLE001
             self._close_do_spare4_task()
             raise DaqError(f"DO 4 출력 오류: {exc}") from exc
-
-    def write_spare_do(self, on: bool) -> bool:
-        on = bool(on)
-        if not (self.level_available and self._daq):
-            self._last_spare_do = on
-            return on
-        try:
-            if (
-                self._do_spare_task is not None
-                and self._spare_do_channel != self.channels.spare_do
-            ):
-                self._close_do_spare_task()
-            if self._do_spare_task is None:
-                task = self._daq.create_task()
-                self._daq.create_do_lines(task, self.channels.spare_do)
-                self._do_spare_task = task
-                self._spare_do_channel = self.channels.spare_do
-            self._daq.write_digital_lines(self._do_spare_task, [on])
-            self._last_spare_do = on
-            return on
-        except Exception as exc:  # noqa: BLE001
-            self._close_do_spare_task()
-            raise DaqError(f"DO 5 출력 오류: {exc}") from exc
 
     def write_voltage(self, voltage: float, channel: str | None = None) -> float:
         voltage = max(0.0, min(5.0, float(voltage)))
@@ -479,12 +431,6 @@ class DaqService:
         self._level_channel = None
         self._clear_handle(task)
 
-    def _close_di_flame_task(self) -> None:
-        task = self._di_flame_task
-        self._di_flame_task = None
-        self._flame_channel = None
-        self._clear_handle(task)
-
     def _close_do_task(self) -> None:
         task = self._do_task
         self._do_task = None
@@ -507,12 +453,6 @@ class DaqService:
         task = self._do_spare4_task
         self._do_spare4_task = None
         self._spare_do4_channel = None
-        self._clear_handle(task)
-
-    def _close_do_spare_task(self) -> None:
-        task = self._do_spare_task
-        self._do_spare_task = None
-        self._spare_do_channel = None
         self._clear_handle(task)
 
     def _close_tc_task_unlocked(self) -> None:
@@ -546,10 +486,6 @@ class DaqService:
         except DaqError:
             pass
         try:
-            self.write_spare_do(False)
-        except DaqError:
-            pass
-        try:
             self.write_voltage(0.0)
         except DaqError:
             pass
@@ -563,10 +499,8 @@ class DaqService:
             pass
         self._close_di_task()
         self._close_do_task()
-        self._close_di_flame_task()
         self._close_do_igniter_task()
         self._close_do_inverter_task()
         self._close_do_spare4_task()
-        self._close_do_spare_task()
         self._close_tc_task()
         self._close_ao_task()

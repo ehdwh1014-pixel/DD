@@ -77,10 +77,11 @@ class TrendGraph(tk.Canvas):
         self.configure(highlightbackground=COLORS["border"], highlightthickness=1)
         self.bind("<Configure>", lambda _e: self.draw())
 
-    def add(self, *values: float) -> None:
+    def add(self, *values: float, redraw: bool = True) -> None:
         for series, value in zip(self.series, values):
             series.append(float(value))
-        self.draw()
+        if redraw:
+            self.draw()
 
     def clear(self) -> None:
         for series in self.series:
@@ -166,7 +167,10 @@ class TrendGraph(tk.Canvas):
 
 
 class FlowControlApp(tk.Tk):
-    POLL_MS = 120
+    POLL_MS = 200  # main control cycle 0.2 s
+    GRAPH_MS = 500  # full graph redraw interval
+    REDISCOVER_MS = 5000  # NI device rediscovery
+    TC_POLL_S = 5.0  # thermocouple read interval
 
     @staticmethod
     def _bundle_dir() -> Path:
@@ -227,10 +231,10 @@ class FlowControlApp(tk.Tk):
         self.current_ng_ao = 0.0
         self.current_spare_ao = 0.0
         self.spare_do4_on = False
-        self.spare_do_on = False
         self.ng_ao_voltage = tk.StringVar(value="0.0")
         self.filtered_flow = 0.0
         self._last_loop_at: float | None = None
+        self._last_graph_draw_at = 0.0
         # Wall-clock time when pump feedback control was started.
         self._feedback_started_wall: datetime | None = None
         self._feedback_timer_started_at: float | None = None
@@ -251,7 +255,6 @@ class FlowControlApp(tk.Tk):
         self._tc_pending_error: str | None = None
         self._tc_last_ui_values: list[str] = [""] * 10
         self._tc_last_status_text = ""
-        self.TC_POLL_S = 2.0
 
         self._build_style()
         self._build_layout()
@@ -593,7 +596,7 @@ class FlowControlApp(tk.Tk):
         nav_items = (
             ("pump", "펌프"),
             ("level", "레벨 / 밸브"),
-            ("flame", "화염 / 점화"),
+            ("flame", "점화"),
         )
         self.touch_nav_buttons: dict[str, ttk.Button] = {}
         for column, (name, text) in enumerate(nav_items):
@@ -890,33 +893,19 @@ class FlowControlApp(tk.Tk):
         card = self.panel(section)
         self.place_panel(card, row=0, column=0, sticky="nsew")
 
-        ttk.Label(card, text="FD / IGN", style="PanelTitle.TLabel").pack(anchor="w")
+        ttk.Label(card, text="점화 / Coolint P", style="PanelTitle.TLabel").pack(anchor="w")
         center = ttk.Frame(card, style="Panel.TFrame")
         center.pack(expand=True)
-        self.flame_canvas = tk.Canvas(
-            center, width=120, height=120, bg=COLORS["panel"], highlightthickness=0
-        )
-        self.flame_canvas.pack(side="left", padx=(0, 18))
-        self.flame_ring = self.flame_canvas.create_oval(
-            5, 5, 115, 115, fill="#F1F5F9", outline="#CBD5E1", width=4
-        )
-        self.flame_lamp = self.flame_canvas.create_oval(
-            28, 28, 92, 92, fill="#CBD5E1", outline="#94A3B8", width=3
-        )
         controls = ttk.Frame(center, style="Panel.TFrame")
-        controls.pack(side="left")
-        self.flame_label = ttk.Label(controls, text="FD", style="TouchSV.TLabel")
-        self.flame_label.pack(anchor="w", pady=(0, 14))
-        ign_row = ttk.Frame(controls, style="Panel.TFrame")
-        ign_row.pack(anchor="w")
+        controls.pack()
         self.igniter_button = ttk.Button(
-            ign_row,
+            controls,
             text="IGN OFF",
             style="TouchStop.TButton",
             command=self.toggle_igniter,
             width=10,
         )
-        self.igniter_button.pack(side="left")
+        self.igniter_button.pack(anchor="w")
         self.igniter_caption = self.igniter_button
         self.coolint_p_button = ttk.Button(
             controls,
@@ -1049,11 +1038,11 @@ class FlowControlApp(tk.Tk):
         self.feedback_ao_graph.configure(width=200, height=80)
         self.feedback_ao_graph.pack(fill="x")
 
-        # --- 4/4 펄스미터 통신 + FD / IGN ---
+        # --- 4/4 펄스미터 통신 + IGN / Coolint P ---
         safety = self.panel(page)
         safety.configure(padding=6)
         self.place_panel(safety, row=0, column=3, sticky="nsew")
-        ttk.Label(safety, text="통신 / 화염", style="PanelTitle.TLabel").pack(anchor="w")
+        ttk.Label(safety, text="통신 / 점화", style="PanelTitle.TLabel").pack(anchor="w")
 
         pulse_row = ttk.Frame(safety, style="Panel.TFrame")
         pulse_row.pack(anchor="w", pady=(10, 0))
@@ -1072,31 +1061,13 @@ class FlowControlApp(tk.Tk):
 
         ttk.Separator(safety, orient="horizontal").pack(fill="x", pady=(12, 10))
 
-        flame_block = ttk.Frame(safety, style="Panel.TFrame")
-        flame_block.pack(anchor="w")
-        self.flame_canvas = tk.Canvas(
-            flame_block, width=36, height=36, bg=COLORS["panel"], highlightthickness=0
-        )
-        self.flame_canvas.pack(side="left")
-        self.flame_ring = self.flame_canvas.create_oval(
-            2, 2, 34, 34, fill="#F1F5F9", outline="#CBD5E1", width=2
-        )
-        self.flame_lamp = self.flame_canvas.create_oval(
-            8, 8, 28, 28, fill="#CBD5E1", outline="#94A3B8", width=2
-        )
-        flame_text = ttk.Frame(flame_block, style="Panel.TFrame")
-        flame_text.pack(side="left", padx=(8, 0))
-        self.flame_label = ttk.Label(flame_text, text="FD", style="FlameStatus.TLabel")
-        self.flame_label.pack(anchor="w")
-        ttk.Label(flame_text, text="화염감지기", style="Hint.TLabel").pack(anchor="w")
-
         self.igniter_button = ttk.Button(
             safety,
             text="IGN OFF",
             style="Start.TButton",
             command=self.toggle_igniter,
         )
-        self.igniter_button.pack(fill="x", pady=(14, 0))
+        self.igniter_button.pack(fill="x", pady=(0, 0))
         self.igniter_caption = self.igniter_button
         ttk.Label(safety, text="점화기", style="Hint.TLabel").pack(anchor="w", pady=(2, 0))
 
@@ -1621,7 +1592,7 @@ class FlowControlApp(tk.Tk):
         self.tc_value_labels = []
 
     def open_ao_popup(self) -> None:
-        """Open manual AO2 + valve DO0..2 + spare DO5 test window."""
+        """Open manual AO2 + valve DO0..2 test window."""
         if self._ao_popup is not None and self._ao_popup.winfo_exists():
             self._ao_popup.lift()
             self._ao_popup.focus_force()
@@ -1637,7 +1608,7 @@ class FlowControlApp(tk.Tk):
 
         popup = tk.Toplevel(self)
         self._ao_popup = popup
-        popup.title("I/O 수동 TEST (AO2 + DO0~2 + DO5)")
+        popup.title("I/O 수동 TEST (AO2 + DO0~2)")
         popup.configure(bg=COLORS["bg"])
         self.io_test_active = True
         try:
@@ -1645,7 +1616,6 @@ class FlowControlApp(tk.Tk):
             self.current_spare_ao = self.daq.write_voltage(
                 0.0, self.channels.spare_ao
             )
-            self.spare_do_on = self.daq.write_spare_do(False)
         except DaqError as exc:
             self.io_test_active = False
             popup.destroy()
@@ -1655,7 +1625,7 @@ class FlowControlApp(tk.Tk):
 
         screen_w = max(self.winfo_screenwidth(), 800)
         screen_h = max(self.winfo_screenheight(), 480)
-        w = min(980, max(820, int(screen_w * 0.88)))
+        w = min(860, max(720, int(screen_w * 0.80)))
         h = min(560, max(460, int(screen_h * 0.72)))
         popup.geometry(f"{w}x{h}")
 
@@ -1670,7 +1640,7 @@ class FlowControlApp(tk.Tk):
             text=(
                 "TEST 중 레벨 자동제어는 일시 정지됩니다. "
                 "V1~V3(DO0~2)는 레벨센서와 무관하게 수동 개폐합니다. "
-                "창을 닫으면 AO2=0 V, DO0~2/DO5=OFF 후 자동제어로 복귀합니다. "
+                "창을 닫으면 AO2=0 V, DO0~2=OFF 후 자동제어로 복귀합니다. "
                 "Coolint P(DO4)는 메인 화면에서 계속 제어됩니다."
             ),
             style="Hint.TLabel",
@@ -1679,7 +1649,7 @@ class FlowControlApp(tk.Tk):
 
         body = ttk.Frame(frame, style="App.TFrame")
         body.pack(fill="both", expand=True)
-        body.columnconfigure((0, 1, 2), weight=1, uniform="test")
+        body.columnconfigure((0, 1), weight=1, uniform="test")
         body.rowconfigure(0, weight=1)
 
         controls = self.panel(body)
@@ -1727,7 +1697,7 @@ class FlowControlApp(tk.Tk):
         self.spare_ao_value_label.pack(anchor="w", pady=(7, 0))
 
         valves = self.panel(body)
-        self.place_panel(valves, row=0, column=1, sticky="nsew", padx=6)
+        self.place_panel(valves, row=0, column=1, sticky="nsew", padx=(6, 0))
         ttk.Label(valves, text="전동볼밸브 DO0~2", style="PanelTitle.TLabel").pack(
             anchor="w"
         )
@@ -1774,48 +1744,11 @@ class FlowControlApp(tk.Tk):
             command=self.save_valve_names,
         ).pack(fill="x", pady=(4, 0))
 
-        digital = self.panel(body)
-        self.place_panel(digital, row=0, column=2, sticky="nsew", padx=(6, 0))
-        ttk.Label(digital, text="여분 DO 5", style="PanelTitle.TLabel").pack(anchor="w")
-        ttk.Label(
-            digital,
-            text="DO0~2와 동일 SINK · 수동 ON/OFF",
-            style="Hint.TLabel",
-        ).pack(anchor="w", pady=(2, 10))
-
-        for label, channel, status_attr, setter in (
-            ("DO 5", self.channels.spare_do, "spare_do_status", self.set_spare_do),
-        ):
-            row = ttk.Frame(digital, style="Panel.TFrame")
-            row.pack(fill="x", pady=(0, 2))
-            ttk.Label(row, text=label, style="PanelTitle.TLabel").pack(side="left")
-            status = ttk.Label(row, text="OFF", style="ValueSmall.TLabel")
-            status.pack(side="right")
-            setattr(self, status_attr, status)
-            ttk.Label(digital, text=channel, style="Hint.TLabel").pack(
-                anchor="w", pady=(0, 4)
-            )
-            buttons = ttk.Frame(digital, style="Panel.TFrame")
-            buttons.pack(fill="x", pady=(0, 12))
-            buttons.columnconfigure((0, 1), weight=1)
-            ttk.Button(
-                buttons,
-                text="ON",
-                style="Start.TButton",
-                command=lambda on=True, fn=setter: fn(on),
-            ).grid(row=0, column=0, sticky="ew", padx=(0, 3))
-            ttk.Button(
-                buttons,
-                text="OFF",
-                style="Stop.TButton",
-                command=lambda on=False, fn=setter: fn(on),
-            ).grid(row=0, column=1, sticky="ew", padx=(3, 0))
-
         popup.protocol("WM_DELETE_WINDOW", self._close_ao_popup)
 
     def _close_ao_popup(self) -> None:
         try:
-            # Clear TEST outputs. Water pump AO0 and NG PUMP AO1 stay as-is.
+            # Clear TEST outputs. Water pump AO0, NG PUMP AO1, Coolint P stay as-is.
             try:
                 self.daq.write_voltage(0.0, self.channels.spare_ao)
             except DaqError:
@@ -1824,13 +1757,8 @@ class FlowControlApp(tk.Tk):
                 self.valve_commands = self.daq.write_valves([False, False, False])
             except DaqError:
                 pass
-            try:
-                self.daq.write_spare_do(False)
-            except DaqError:
-                pass
         finally:
             self.current_spare_ao = 0.0
-            self.spare_do_on = False
             self.io_test_active = False
             if self._ao_popup is not None and self._ao_popup.winfo_exists():
                 self._ao_popup.destroy()
@@ -1963,10 +1891,9 @@ class FlowControlApp(tk.Tk):
             "  DO ON = White를 0V로 당김 = 열림 명령\n"
             "  ※ 0V 여부는 명령 확인이며 실제 기계 위치 피드백은 아님\n"
             "\n"
-            "【Coolint P DO4 / 여분 DO5 → NI 9477】\n"
-            "  DO0~2와 동일 SINK 배선 (White→DO4 또는 DO5)\n"
-            "  Coolint P(DO4): 메인 화면 ON/OFF\n"
-            "  DO5: I/O TEST에서 수동 ON/OFF\n"
+            "【Coolint P DO4 → NI 9477】\n"
+            "  빨간선 → SMPS +24V / 검은선 → DO4 / COM → 0V\n"
+            "  메인 화면 Coolint P ON/OFF (≤1 A)\n"
             "\n"
             "UI는 MP5Y 표시값(cc/min)을 그대로 PV로 사용합니다.\n"
             "(소프트웨어에서 ×0.46×60 를 다시 하지 않음)"
@@ -2007,10 +1934,8 @@ class FlowControlApp(tk.Tk):
         ng_ao_var = tk.StringVar(value=self.channels.ao_ng_pump)
         di_var = tk.StringVar(value=self.channels.level_inputs)
         do_var = tk.StringVar(value=self.channels.valve_outputs)
-        flame_di_var = tk.StringVar(value=self.channels.flame_input)
         igniter_do_var = tk.StringVar(value=self.channels.igniter_output)
         spare_do4_var = tk.StringVar(value=self.channels.spare_do4)
-        spare_do_var = tk.StringVar(value=self.channels.spare_do)
         port_var = tk.StringVar(value=self.mp5y_config.port)
         slave_var = tk.StringVar(value=str(self.mp5y_config.slave_id))
         baud_var = tk.StringVar(value=str(self.mp5y_config.baudrate))
@@ -2021,15 +1946,13 @@ class FlowControlApp(tk.Tk):
             (2, "NG PUMP AO1 (0~5V)", ng_ao_var),
             (3, "레벨 입력 DI0:5", di_var),
             (4, "밸브 출력 DO0:2", do_var),
-            (5, "화염 감지 DI6", flame_di_var),
-            (6, "점화기 SSR DO3", igniter_do_var),
-            (7, "Coolint P DO4", spare_do4_var),
-            (8, "예비 DO5", spare_do_var),
-            (9, "MP5Y COM 포트", port_var),
-            (10, "MP5Y 주소", slave_var),
-            (11, "MP5Y Baud", baud_var),
-            (12, "표시모드 (frequency_hz/flow_ccpm)", mode_var),
-            (13, "PV포맷 (int16/int32/dec32)", fmt_var),
+            (5, "점화기 SSR DO3", igniter_do_var),
+            (6, "Coolint P DO4", spare_do4_var),
+            (7, "MP5Y COM 포트", port_var),
+            (8, "MP5Y 주소", slave_var),
+            (9, "MP5Y Baud", baud_var),
+            (10, "표시모드 (frequency_hz/flow_ccpm)", mode_var),
+            (11, "PV포맷 (int16/int32/dec32)", fmt_var),
         ):
             ttk.Label(frame, text=label, style="Panel.TLabel").grid(
                 row=row, column=0, sticky="w", pady=3 if self.touch_mode else 8
@@ -2043,11 +1966,9 @@ class FlowControlApp(tk.Tk):
             )
             self.channels.level_inputs = di_var.get().strip() or self.channels.level_inputs
             self.channels.valve_outputs = do_var.get().strip() or self.channels.valve_outputs
-            self.channels.flame_input = flame_di_var.get().strip() or self.channels.flame_input
             self.channels.igniter_output = igniter_do_var.get().strip() or self.channels.igniter_output
             self.channels.spare_do4 = spare_do4_var.get().strip() or self.channels.spare_do4
-            self.channels.spare_do = spare_do_var.get().strip() or self.channels.spare_do
-            # DO4 is reserved for the spare valve; do not keep a legacy FX mapping on line4.
+            # DO4 is reserved for Coolint P; do not keep a legacy FX mapping on line4.
             if (self.channels.inverter_run or "").endswith("/port0/line4"):
                 self.channels.inverter_run = ""
             self.daq.channels = self.channels
@@ -2147,18 +2068,6 @@ class FlowControlApp(tk.Tk):
             )
         if hasattr(self, "coolint_p_button"):
             self._set_coolint_p_button(self.spare_do4_on)
-
-    def set_spare_do(self, on: bool) -> None:
-        try:
-            self.spare_do_on = self.daq.write_spare_do(on)
-        except DaqError as exc:
-            self._show_hardware_error(exc)
-            return
-        if hasattr(self, "spare_do_status"):
-            self.spare_do_status.configure(
-                text="ON" if self.spare_do_on else "OFF",
-                foreground=COLORS["ok"] if self.spare_do_on else COLORS["accent_deep"],
-            )
 
     def apply_ng_ao(self) -> None:
         """Apply NG PUMP AO1 voltage from the main UI."""
@@ -2337,7 +2246,7 @@ class FlowControlApp(tk.Tk):
                 self.after_cancel(job)
             except Exception:  # noqa: BLE001
                 pass
-        self._refresh_job = self.after(2000, self.refresh_connection)
+        self._refresh_job = self.after(self.REDISCOVER_MS, self.refresh_connection)
 
     def _blink_status_lamp(self) -> None:
         """Blink the large DAQ/link lamp so connection state is obvious."""
@@ -2404,7 +2313,6 @@ class FlowControlApp(tk.Tk):
                 return
             if self.level_running:
                 self._update_levels()
-            self._update_flame_status()
             self._update_tc_monitor()
         except DaqError as exc:
             self._safe_stop(exc)
@@ -2482,10 +2390,6 @@ class FlowControlApp(tk.Tk):
             self.spare_do4_on = self.daq.write_spare_do4(False)
         except DaqError as exc:
             stop_error += f" / DO 4 OFF 실패: {exc}"
-        try:
-            self.spare_do_on = self.daq.write_spare_do(False)
-        except DaqError as exc:
-            stop_error += f" / DO 5 OFF 실패: {exc}"
         self.mp5y.close()
         self.feedback_button.configure(
             text="제어 시작",
@@ -2530,7 +2434,7 @@ class FlowControlApp(tk.Tk):
         self.igniter_button.configure(text=("IGN ON" if on else "IGN OFF"), style=style)
 
     def toggle_coolint_p(self) -> None:
-        """Manual Coolint P valve toggle (DO4)."""
+        """Manual Coolint P pump toggle (DO4)."""
         if not self.daq.level_available:
             messagebox.showerror("NI-DAQ 오류", "NI 9422/9477 연결을 확인하세요.")
             return
@@ -2543,43 +2447,6 @@ class FlowControlApp(tk.Tk):
             style = "Start.TButton" if on else "Stop.TButton"
         self.coolint_p_button.configure(
             text=("Coolint P ON" if on else "Coolint P OFF"), style=style
-        )
-
-    def _update_flame_status(self) -> None:
-        self.flame_label.configure(text="FD")
-        if not self.daq.level_available:
-            self.flame_label.configure(foreground=COLORS["muted"])
-            self.flame_canvas.itemconfigure(
-                self.flame_ring, fill="#F1F5F9", outline="#CBD5E1"
-            )
-            self.flame_canvas.itemconfigure(
-                self.flame_lamp, fill="#CBD5E1", outline="#94A3B8"
-            )
-            return
-        try:
-            flame = self.daq.read_flame()
-        except DaqError:
-            # Don't hard-fail the loop for a single DI read.
-            self.flame_label.configure(foreground=COLORS["bad"])
-            self.flame_canvas.itemconfigure(
-                self.flame_ring, fill="#FCE8E8", outline=COLORS["bad"]
-            )
-            self.flame_canvas.itemconfigure(
-                self.flame_lamp, fill=COLORS["bad"], outline="#9B2C2C"
-            )
-            return
-        self.flame_label.configure(
-            foreground=COLORS["warn"] if flame else COLORS["muted"],
-        )
-        self.flame_canvas.itemconfigure(
-            self.flame_ring,
-            fill="#FFF4D6" if flame else "#F1F5F9",
-            outline="#F3B13F" if flame else "#CBD5E1",
-        )
-        self.flame_canvas.itemconfigure(
-            self.flame_lamp,
-            fill="#FFB020" if flame else "#CBD5E1",
-            outline="#D97706" if flame else "#94A3B8",
         )
 
     def _update_levels(self) -> None:
@@ -2733,8 +2600,12 @@ class FlowControlApp(tk.Tk):
             self.fb_hz.configure(text=f"MP5Y 표시: {hz_text} Hz")
         self.output_value.configure(text=f"REF.W: {self.current_ao:.3f} V")
         self.feedback_graph.set_scale(0, max(200.0, sv * 1.5), "cc/min")
-        self.feedback_graph.add(pv, sv)
-        self.feedback_ao_graph.add(self.current_ao)
+        now_mono = time.monotonic()
+        redraw = (now_mono - self._last_graph_draw_at) * 1000.0 >= self.GRAPH_MS
+        self.feedback_graph.add(pv, sv, redraw=redraw)
+        self.feedback_ao_graph.add(self.current_ao, redraw=redraw)
+        if redraw:
+            self._last_graph_draw_at = now_mono
 
     # ------------------------------------------------------------- settings
     def save_settings(self) -> None:
@@ -2752,10 +2623,8 @@ class FlowControlApp(tk.Tk):
             "ng_ao_voltage": self.ng_ao_voltage.get(),
             "level_inputs": self.channels.level_inputs,
             "valve_outputs": self.channels.valve_outputs,
-            "flame_input": self.channels.flame_input,
             "igniter_output": self.channels.igniter_output,
             "spare_do4": self.channels.spare_do4,
-            "spare_do": self.channels.spare_do,
             "inverter_run": self.channels.inverter_run,
             "tc_k_inputs": self.channels.tc_k_inputs,
             "tc_t_inputs": self.channels.tc_t_inputs,
@@ -2798,12 +2667,10 @@ class FlowControlApp(tk.Tk):
         self.ng_ao_voltage.set(str(data.get("ng_ao_voltage", self.ng_ao_voltage.get())))
         self.channels.level_inputs = str(data.get("level_inputs", self.channels.level_inputs))
         self.channels.valve_outputs = str(data.get("valve_outputs", self.channels.valve_outputs))
-        self.channels.flame_input = str(data.get("flame_input", self.channels.flame_input))
         self.channels.igniter_output = str(data.get("igniter_output", self.channels.igniter_output))
         self.channels.spare_do4 = str(data.get("spare_do4", self.channels.spare_do4))
-        self.channels.spare_do = str(data.get("spare_do", self.channels.spare_do))
         legacy_inv = str(data.get("inverter_run", self.channels.inverter_run))
-        # Old builds mapped DO4 to iG5A FX. Free line4 for the spare valve.
+        # Old builds mapped DO4 to iG5A FX. Free line4 for Coolint P.
         if legacy_inv.endswith("/port0/line4"):
             if "spare_do4" not in data:
                 self.channels.spare_do4 = legacy_inv
