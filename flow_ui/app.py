@@ -831,7 +831,7 @@ class FlowControlApp(tk.Tk):
         self.level_logic_labels = []
         self.valve_do_labels = []
         rules = (
-            "LOW → 열림  /  HIGH → 닫힘",
+            "4접점 · L열림 / H닫힘 (H+L 동시ON=고수위)",
             "LOW → 닫힘  /  HIGH → 열림",
             "LOW → 닫힘  /  HIGH → 열림",
         )
@@ -918,6 +918,14 @@ class FlowControlApp(tk.Tk):
         )
         self.igniter_button.pack(side="left")
         self.igniter_caption = self.igniter_button
+        self.coolint_p_button = ttk.Button(
+            controls,
+            text="Coolint P OFF",
+            style="TouchStop.TButton",
+            command=self.toggle_coolint_p,
+            width=12,
+        )
+        self.coolint_p_button.pack(anchor="w", pady=(14, 0))
         return section
 
     def _create_desktop_feedback_page(self) -> ttk.Frame:
@@ -1091,6 +1099,17 @@ class FlowControlApp(tk.Tk):
         self.igniter_button.pack(fill="x", pady=(14, 0))
         self.igniter_caption = self.igniter_button
         ttk.Label(safety, text="점화기", style="Hint.TLabel").pack(anchor="w", pady=(2, 0))
+
+        self.coolint_p_button = ttk.Button(
+            safety,
+            text="Coolint P OFF",
+            style="Stop.TButton",
+            command=self.toggle_coolint_p,
+        )
+        self.coolint_p_button.pack(fill="x", pady=(12, 0))
+        ttk.Label(safety, text="Coolint P · DO4", style="Hint.TLabel").pack(
+            anchor="w", pady=(2, 0)
+        )
 
         # --- 하단: V1 / V2 / V3 삼등분 ---
         level_section = self.panel(page)
@@ -1602,7 +1621,7 @@ class FlowControlApp(tk.Tk):
         self.tc_value_labels = []
 
     def open_ao_popup(self) -> None:
-        """Open manual AO2 + valve DO0..2 + spare DO4/DO5 test window."""
+        """Open manual AO2 + valve DO0..2 + spare DO5 test window."""
         if self._ao_popup is not None and self._ao_popup.winfo_exists():
             self._ao_popup.lift()
             self._ao_popup.focus_force()
@@ -1618,7 +1637,7 @@ class FlowControlApp(tk.Tk):
 
         popup = tk.Toplevel(self)
         self._ao_popup = popup
-        popup.title("I/O 수동 TEST (AO2 + DO0~2 + DO4/5)")
+        popup.title("I/O 수동 TEST (AO2 + DO0~2 + DO5)")
         popup.configure(bg=COLORS["bg"])
         self.io_test_active = True
         try:
@@ -1626,7 +1645,6 @@ class FlowControlApp(tk.Tk):
             self.current_spare_ao = self.daq.write_voltage(
                 0.0, self.channels.spare_ao
             )
-            self.spare_do4_on = self.daq.write_spare_do4(False)
             self.spare_do_on = self.daq.write_spare_do(False)
         except DaqError as exc:
             self.io_test_active = False
@@ -1652,7 +1670,8 @@ class FlowControlApp(tk.Tk):
             text=(
                 "TEST 중 레벨 자동제어는 일시 정지됩니다. "
                 "V1~V3(DO0~2)는 레벨센서와 무관하게 수동 개폐합니다. "
-                "창을 닫으면 AO2=0 V, DO0~2/DO4/DO5=OFF 후 자동제어로 복귀합니다."
+                "창을 닫으면 AO2=0 V, DO0~2/DO5=OFF 후 자동제어로 복귀합니다. "
+                "Coolint P(DO4)는 메인 화면에서 계속 제어됩니다."
             ),
             style="Hint.TLabel",
             wraplength=w - 60,
@@ -1757,9 +1776,7 @@ class FlowControlApp(tk.Tk):
 
         digital = self.panel(body)
         self.place_panel(digital, row=0, column=2, sticky="nsew", padx=(6, 0))
-        ttk.Label(
-            digital, text="여분 DO 4 / DO 5", style="PanelTitle.TLabel"
-        ).pack(anchor="w")
+        ttk.Label(digital, text="여분 DO 5", style="PanelTitle.TLabel").pack(anchor="w")
         ttk.Label(
             digital,
             text="DO0~2와 동일 SINK · 수동 ON/OFF",
@@ -1767,7 +1784,6 @@ class FlowControlApp(tk.Tk):
         ).pack(anchor="w", pady=(2, 10))
 
         for label, channel, status_attr, setter in (
-            ("DO 4", self.channels.spare_do4, "spare_do4_status", self.set_spare_do4),
             ("DO 5", self.channels.spare_do, "spare_do_status", self.set_spare_do),
         ):
             row = ttk.Frame(digital, style="Panel.TFrame")
@@ -1809,16 +1825,11 @@ class FlowControlApp(tk.Tk):
             except DaqError:
                 pass
             try:
-                self.daq.write_spare_do4(False)
-            except DaqError:
-                pass
-            try:
                 self.daq.write_spare_do(False)
             except DaqError:
                 pass
         finally:
             self.current_spare_ao = 0.0
-            self.spare_do4_on = False
             self.spare_do_on = False
             self.io_test_active = False
             if self._ao_popup is not None and self._ao_popup.winfo_exists():
@@ -1952,9 +1963,10 @@ class FlowControlApp(tk.Tk):
             "  DO ON = White를 0V로 당김 = 열림 명령\n"
             "  ※ 0V 여부는 명령 확인이며 실제 기계 위치 피드백은 아님\n"
             "\n"
-            "【예비 밸브 DO4 / DO5 → NI 9477】\n"
+            "【Coolint P DO4 / 여분 DO5 → NI 9477】\n"
             "  DO0~2와 동일 SINK 배선 (White→DO4 또는 DO5)\n"
-            "  I/O TEST에서 수동 ON/OFF\n"
+            "  Coolint P(DO4): 메인 화면 ON/OFF\n"
+            "  DO5: I/O TEST에서 수동 ON/OFF\n"
             "\n"
             "UI는 MP5Y 표시값(cc/min)을 그대로 PV로 사용합니다.\n"
             "(소프트웨어에서 ×0.46×60 를 다시 하지 않음)"
@@ -2011,7 +2023,7 @@ class FlowControlApp(tk.Tk):
             (4, "밸브 출력 DO0:2", do_var),
             (5, "화염 감지 DI6", flame_di_var),
             (6, "점화기 SSR DO3", igniter_do_var),
-            (7, "예비 밸브 DO4", spare_do4_var),
+            (7, "Coolint P DO4", spare_do4_var),
             (8, "예비 DO5", spare_do_var),
             (9, "MP5Y COM 포트", port_var),
             (10, "MP5Y 주소", slave_var),
@@ -2133,6 +2145,8 @@ class FlowControlApp(tk.Tk):
                 text="ON" if self.spare_do4_on else "OFF",
                 foreground=COLORS["ok"] if self.spare_do4_on else COLORS["accent_deep"],
             )
+        if hasattr(self, "coolint_p_button"):
+            self._set_coolint_p_button(self.spare_do4_on)
 
     def set_spare_do(self, on: bool) -> None:
         try:
@@ -2479,6 +2493,8 @@ class FlowControlApp(tk.Tk):
         )
         if hasattr(self, "igniter_button"):
             self._set_igniter_button(False)
+        if hasattr(self, "coolint_p_button"):
+            self._set_coolint_p_button(False)
         self.level_master_status.configure(text="안전 정지 · 모든 밸브 닫힘")
         self._render_level_states([False] * 6, ["오류 · 안전 닫힘"] * 3)
         self.output_value.configure(text=f"REF.W: {self.current_ao:.3f} V")
@@ -2512,6 +2528,22 @@ class FlowControlApp(tk.Tk):
         else:
             style = "Start.TButton" if on else "Stop.TButton"
         self.igniter_button.configure(text=("IGN ON" if on else "IGN OFF"), style=style)
+
+    def toggle_coolint_p(self) -> None:
+        """Manual Coolint P valve toggle (DO4)."""
+        if not self.daq.level_available:
+            messagebox.showerror("NI-DAQ 오류", "NI 9422/9477 연결을 확인하세요.")
+            return
+        self.set_spare_do4(not self.spare_do4_on)
+
+    def _set_coolint_p_button(self, on: bool) -> None:
+        if self.touch_mode:
+            style = "TouchStart.TButton" if on else "TouchStop.TButton"
+        else:
+            style = "Start.TButton" if on else "Stop.TButton"
+        self.coolint_p_button.configure(
+            text=("Coolint P ON" if on else "Coolint P OFF"), style=style
+        )
 
     def _update_flame_status(self) -> None:
         self.flame_label.configure(text="FD")
