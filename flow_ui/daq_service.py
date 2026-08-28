@@ -46,9 +46,9 @@ class ChannelConfig:
     # SSR input -> NI 9477 DO3 (line3). NI 9477 is sinking output.
     flame_input: str = f"{DI_MODULE}/port0/line6"
     igniter_output: str = f"{DO_MODULE}/port0/line3"
-    # LS iG5A RUN: DO4 sinks P1(FX) to COM when ON (NPN mode).
-    inverter_run: str = f"{DO_MODULE}/port0/line4"
-    inverter_run2: str = f"{DO_MODULE}/port0/line5"
+    # Optional inverter FX DO (empty = unused). Water pumps use AO 0~5 V only.
+    inverter_run: str = ""
+    inverter_run2: str = ""
     spare_do: str = f"{DO_MODULE}/port0/line5"
     tc_k_inputs: str = f"{TC_MODULE}/ai0:4"
     tc_t_inputs: str = f"{TC_MODULE}/ai5:9"
@@ -308,15 +308,19 @@ class DaqService:
             raise DaqError(f"점화기 SSR 출력 오류: {exc}") from exc
 
     def write_inverter_run(self, on: bool) -> bool:
-        """Write LS iG5A FX (P1) via DO4 sink to COM."""
+        """Optional inverter FX DO. No-op when inverter_run channel is empty."""
         on = bool(on)
+        channel = (self.channels.inverter_run or "").strip()
+        if not channel:
+            self._last_inverter = on
+            return on
         if not (self.level_available and self._nidaqmx):
             self._last_inverter = on
             return on
         try:
             if (
                 self._do_inverter_task is not None
-                and self._inverter_channel != self.channels.inverter_run
+                and self._inverter_channel != channel
             ):
                 self._close_do_inverter_task()
             if self._do_inverter_task is None:
@@ -324,17 +328,17 @@ class DaqService:
 
                 task = self._nidaqmx.Task()
                 task.do_channels.add_do_chan(
-                    self.channels.inverter_run,
+                    channel,
                     line_grouping=LineGrouping.CHAN_PER_LINE,
                 )
                 self._do_inverter_task = task
-                self._inverter_channel = self.channels.inverter_run
+                self._inverter_channel = channel
             self._do_inverter_task.write([on], auto_start=True)
             self._last_inverter = on
             return on
         except Exception as exc:  # noqa: BLE001
             self._close_do_inverter_task()
-            raise DaqError(f"인버터 RUN(DO4) 출력 오류: {exc}") from exc
+            raise DaqError(f"인버터 RUN 출력 오류: {exc}") from exc
 
     def write_inverter_run2(self, on: bool) -> bool:
         """Write second LS iG5A FX via DO5 (default) sink to COM."""

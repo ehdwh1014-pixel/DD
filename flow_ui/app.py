@@ -232,6 +232,8 @@ class FlowControlApp(tk.Tk):
         self.current_spare_ao = 0.0
         self.spare_do_on = False
         self.ng_ao_voltage = tk.StringVar(value="0.0")
+        self.sv = tk.StringVar(value="0.0")
+        self.sv2 = tk.StringVar(value="0.0")
         self.filtered_flow = 0.0
         self.filtered_flow2 = 0.0
         self._last_loop_at: float | None = None
@@ -706,14 +708,18 @@ class FlowControlApp(tk.Tk):
         self.focus_err.pack(anchor="w", pady=(2, 0))
         self.fb_hz = ttk.Label(current, text="MP5Y: 대기", style="Hint.TLabel")
         self.fb_hz.pack(anchor="w", pady=(2, 0))
+        self.output_value = ttk.Label(current, text="AO0: 0.000 V", style="ValueSmall.TLabel")
+        self.output_value.pack(anchor="w", pady=(2, 0))
         self.focus_pv2 = ttk.Label(current, text="PV  0.0", style="TouchValue.TLabel")
         self.focus_pv2.pack(anchor="w", pady=(6, 0))
-        self.fb_hz2 = ttk.Label(current, text="MP5Y: 대기", style="Hint.TLabel")
+        self.focus_sv2 = ttk.Label(current, text="SV  0.0", style="TouchSV.TLabel")
+        self.focus_sv2.pack(anchor="w")
+        self.focus_err2 = ttk.Label(current, text="오차: 0.0 cc/min", style="ValueSmall.TLabel")
+        self.focus_err2.pack(anchor="w", pady=(2, 0))
+        self.fb_hz2 = ttk.Label(current, text="MP5Y: —", style="Hint.TLabel")
         self.fb_hz2.pack(anchor="w", pady=(2, 0))
-        self.output_value = ttk.Label(current, text="REF.W: 0.000 V", style="ValueSmall.TLabel")
-        self.output_value.pack(anchor="w", pady=(2, 0))
         self.output_value2 = ttk.Label(
-            current, text="REF.W: 0.000 V", style="ValueSmall.TLabel"
+            current, text="AO2: 0.000 V", style="ValueSmall.TLabel"
         )
         self.output_value2.pack(anchor="w", pady=(2, 3))
         self.control_start_label = ttk.Label(
@@ -757,14 +763,13 @@ class FlowControlApp(tk.Tk):
 
         target = self.panel(section)
         self.place_panel(target, row=0, column=1, sticky="nsew", padx=(0, 5))
-        ttk.Label(target, text="목표 유량 SV", style="PanelTitle.TLabel").pack(anchor="w")
-        self.sv = tk.StringVar(value="0.0")
+        ttk.Label(target, text="펌프1 SV (cc/min)", style="PanelTitle.TLabel").pack(anchor="w")
         self.touch_sv_display = ttk.Button(
             target,
             textvariable=self.sv,
             style="Touch.TButton",
             command=lambda: self.open_numeric_keypad(
-                self.sv, "목표 유량 SV (cc/min)", 0.0, 9999.0, 1
+                self.sv, "펌프1 목표 유량 SV (cc/min)", 0.0, 9999.0, 1
             ),
         )
         self.touch_sv_display.pack(fill="x", pady=(6, 5))
@@ -782,6 +787,36 @@ class FlowControlApp(tk.Tk):
                 text=text,
                 style="Touch.TButton",
                 command=lambda amount=delta: self._adjust_sv(amount),
+            ).grid(
+                row=row,
+                column=column,
+                sticky="ew",
+                padx=(0 if column == 0 else 3, 0),
+                pady=(0 if row == 0 else 3, 0),
+            )
+
+        ttk.Separator(target, orient="horizontal").pack(fill="x", pady=(10, 8))
+        ttk.Label(target, text="펌프2 SV (cc/min)", style="PanelTitle.TLabel").pack(anchor="w")
+        self.touch_sv2_display = ttk.Button(
+            target,
+            textvariable=self.sv2,
+            style="Touch.TButton",
+            command=lambda: self.open_numeric_keypad(
+                self.sv2, "펌프2 목표 유량 SV (cc/min)", 0.0, 9999.0, 1
+            ),
+        )
+        self.touch_sv2_display.pack(fill="x", pady=(6, 5))
+
+        adjust2 = ttk.Frame(target, style="Panel.TFrame")
+        adjust2.pack(fill="x")
+        for index, (text, delta) in enumerate((("-10", -10), ("-1", -1), ("+1", 1), ("+10", 10))):
+            row, column = divmod(index, 2)
+            adjust2.columnconfigure(column, weight=1)
+            ttk.Button(
+                adjust2,
+                text=text,
+                style="Touch.TButton",
+                command=lambda amount=delta: self._adjust_sv2(amount),
             ).grid(
                 row=row,
                 column=column,
@@ -869,6 +904,7 @@ class FlowControlApp(tk.Tk):
             tuning, text="설정 저장", style="Touch.TButton", command=self.save_settings
         ).pack(fill="x", pady=(7, 0))
         self.sv.trace_add("write", lambda *_args: self._refresh_touch_sv())
+        self.sv2.trace_add("write", lambda *_args: self._refresh_touch_sv())
         self._refresh_touch_sv()
         return section
 
@@ -1020,12 +1056,11 @@ class FlowControlApp(tk.Tk):
         focus.configure(padding=6)
         self.place_panel(focus, row=0, column=1, sticky="nsew", padx=(0, 4))
         ttk.Label(focus, text="CURRENT FLOW", style="PanelTitle.TLabel").pack(anchor="w")
+        ttk.Label(focus, text="펌프1", style="Panel.TLabel").pack(anchor="w", pady=(6, 0))
         self.focus_pv = ttk.Label(focus, text="PV  0.0 cc/min", style="ValueCompact.TLabel")
-        self.focus_pv.pack(anchor="w", pady=(8, 0))
+        self.focus_pv.pack(anchor="w", pady=(4, 0))
         self.pv_value = self.focus_pv
-
-        ttk.Label(focus, text="SV (cc/min)", style="Panel.TLabel").pack(anchor="w", pady=(10, 0))
-        self.sv = tk.StringVar(value="0.0")
+        ttk.Label(focus, text="SV (cc/min)", style="Panel.TLabel").pack(anchor="w", pady=(6, 0))
         self.sv_entry = ttk.Entry(
             focus,
             textvariable=self.sv,
@@ -1033,17 +1068,34 @@ class FlowControlApp(tk.Tk):
             justify="center",
             width=8,
         )
-        self.sv_entry.pack(anchor="w", pady=(4, 0))
-        self.output_value = ttk.Label(focus, text="REF.W: 0.000 V", style="ValueSmall.TLabel")
-        self.output_value.pack(anchor="w", pady=(10, 0))
+        self.sv_entry.pack(anchor="w", pady=(2, 0))
+        self.focus_err = ttk.Label(focus, text="오차: 0.0 cc/min", style="ValueSmall.TLabel")
+        self.focus_err.pack(anchor="w", pady=(2, 0))
+        self.fb_hz = ttk.Label(focus, text="MP5Y: 대기", style="Hint.TLabel")
+        self.fb_hz.pack(anchor="w", pady=(2, 0))
+        self.output_value = ttk.Label(focus, text="AO0: 0.000 V", style="ValueSmall.TLabel")
+        self.output_value.pack(anchor="w", pady=(2, 0))
+
+        ttk.Label(focus, text="펌프2", style="Panel.TLabel").pack(anchor="w", pady=(8, 0))
         self.focus_pv2 = ttk.Label(focus, text="PV  0.0 cc/min", style="ValueCompact.TLabel")
-        self.focus_pv2.pack(anchor="w", pady=(8, 0))
-        self.fb_hz2 = ttk.Label(focus, text="MP5Y: 대기", style="Hint.TLabel")
+        self.focus_pv2.pack(anchor="w", pady=(4, 0))
+        ttk.Label(focus, text="SV (cc/min)", style="Panel.TLabel").pack(anchor="w", pady=(6, 0))
+        self.sv2_entry = ttk.Entry(
+            focus,
+            textvariable=self.sv2,
+            style="Highlight.TEntry",
+            justify="center",
+            width=8,
+        )
+        self.sv2_entry.pack(anchor="w", pady=(2, 0))
+        self.focus_err2 = ttk.Label(focus, text="오차: 0.0 cc/min", style="ValueSmall.TLabel")
+        self.focus_err2.pack(anchor="w", pady=(2, 0))
+        self.fb_hz2 = ttk.Label(focus, text="MP5Y2: 미연결", style="Hint.TLabel")
         self.fb_hz2.pack(anchor="w", pady=(2, 0))
         self.output_value2 = ttk.Label(
-            focus, text="REF.W: 0.000 V", style="ValueSmall.TLabel"
+            focus, text="AO2: 0.000 V", style="ValueSmall.TLabel"
         )
-        self.output_value2.pack(anchor="w", pady=(4, 0))
+        self.output_value2.pack(anchor="w", pady=(2, 0))
         self.control_start_label = ttk.Label(
             focus, text="제어 시작  --:--:--", style="ValueSmall.TLabel"
         )
@@ -1057,8 +1109,6 @@ class FlowControlApp(tk.Tk):
         ttk.Button(
             injection_row, text="초기화", command=self.reset_injection_time
         ).pack(side="right")
-        self.focus_err = ttk.Label(focus, text="오차: 0.0 cc/min", style="ValueSmall.TLabel")
-        self.fb_hz = ttk.Label(focus, text="MP5Y: 대기", style="Hint.TLabel")
 
         # --- 3/4 미니 그래프 (보기 전용, 작게) ---
         graphs = self.panel(page)
@@ -1247,11 +1297,21 @@ class FlowControlApp(tk.Tk):
         current = self.number_silent(self.sv, 0.0)
         self._set_sv(current + delta)
 
+    def _set_sv2(self, value: float) -> None:
+        self.sv2.set(f"{max(0.0, min(9999.0, float(value))):.1f}")
+
+    def _adjust_sv2(self, delta: float) -> None:
+        current = self.number_silent(self.sv2, 0.0)
+        self._set_sv2(current + delta)
+
     def _refresh_touch_sv(self) -> None:
         if not self.touch_mode or not hasattr(self, "focus_sv"):
             return
         value = self.number_silent(self.sv, 0.0)
         self.focus_sv.configure(text=f"SV  {value:.1f}")
+        if hasattr(self, "focus_sv2"):
+            value2 = self.number_silent(self.sv2, 0.0)
+            self.focus_sv2.configure(text=f"SV  {value2:.1f}")
 
     def open_numeric_keypad(
         self,
@@ -2021,17 +2081,17 @@ class FlowControlApp(tk.Tk):
         mode_var = tk.StringVar(value=self.mp5y_config.value_mode)
         fmt_var = tk.StringVar(value=self.mp5y_config.pv_format)
         for row, label, var in (
-            (1, "REF.W AO0 / 인버터 V1", ao_var),
-            (2, "REF.W2 AO2 / 인버터 V2", ao2_var),
+            (1, "펌프1 AO0 (0~5V)", ao_var),
+            (2, "펌프2 AO2 (0~5V)", ao2_var),
             (3, "NG PUMP AO1 (0~5V)", ng_ao_var),
             (4, "레벨 입력 DI0:5", di_var),
             (5, "밸브 출력 DO0:2", do_var),
             (6, "화염 감지 DI6", flame_di_var),
             (7, "점화기 SSR DO3", igniter_do_var),
-            (8, "인버터 RUN DO4", inverter_do_var),
-            (9, "인버터 RUN2 DO5", inverter2_do_var),
+            (8, "인버터 RUN DO4 (선택)", inverter_do_var),
+            (9, "인버터 RUN2 DO5 (선택)", inverter2_do_var),
             (10, "MP5Y COM 포트", port_var),
-            (11, "MP5Y2 COM 포트", port2_var),
+            (11, "MP5Y2 COM (선택)", port2_var),
             (12, "MP5Y 주소", slave_var),
             (13, "MP5Y2 주소", slave2_var),
             (14, "MP5Y Baud", baud_var),
@@ -2053,10 +2113,8 @@ class FlowControlApp(tk.Tk):
             self.channels.valve_outputs = do_var.get().strip() or self.channels.valve_outputs
             self.channels.flame_input = flame_di_var.get().strip() or self.channels.flame_input
             self.channels.igniter_output = igniter_do_var.get().strip() or self.channels.igniter_output
-            self.channels.inverter_run = inverter_do_var.get().strip() or self.channels.inverter_run
-            self.channels.inverter_run2 = (
-                inverter2_do_var.get().strip() or self.channels.inverter_run2
-            )
+            self.channels.inverter_run = inverter_do_var.get().strip()
+            self.channels.inverter_run2 = inverter2_do_var.get().strip()
             self.daq.channels = self.channels
             self.mp5y_config.port = port_var.get().strip() or "COM3"
             self.mp5y2_config.port = port2_var.get().strip() or "COM4"
@@ -2249,7 +2307,8 @@ class FlowControlApp(tk.Tk):
     def validate_feedback(self) -> bool:
         for var, label in (
             (self.fb_pulse_ml, "펄스정수"),
-            (self.sv, "SV"),
+            (self.sv, "펌프1 SV"),
+            (self.sv2, "펌프2 SV"),
             (self.p_gain, "P Gain"),
             (self.i_gain, "I Gain"),
             (self.lpf_cutoff, "LPF"),
@@ -2265,26 +2324,17 @@ class FlowControlApp(tk.Tk):
     def toggle_feedback(self) -> None:
         if not self.feedback_running and not self.validate_feedback():
             return
-        if not self.feedback_running and not (
-            self.daq.available and self.daq.level_available
-        ):
+        if not self.feedback_running and not self.daq.available:
             messagebox.showerror(
                 "NI-DAQ 오류",
-                "피드백 제어는 NI 9264(AO)와 NI 9477(DO4)이 모두 연결되어야 합니다.",
+                "피드백 제어는 NI 9264(AO0/AO2) 연결이 필요합니다.",
             )
             return
         if not self.feedback_running and not self._mp5y_ok:
             messagebox.showerror(
                 "MP5Y 통신 오류",
-                "유량 피드백 제어에는 MP5Y 응답이 필요합니다.\n"
-                "NI-DAQ 레벨/밸브 제어와 I/O TEST는 계속 사용할 수 있습니다.",
-            )
-            return
-        if not self.feedback_running and not self._mp5y2_ok:
-            messagebox.showerror(
-                "MP5Y2 통신 오류",
-                "두 번째 펌프 피드백에는 MP5Y2 응답이 필요합니다.\n"
-                "설정에서 MP5Y2 COM 포트를 확인하세요.",
+                "펌프1 유량 피드백에는 MP5Y 응답이 필요합니다.\n"
+                "펌프2는 펄스미터 미연결 시에도 AO2 제어가 가능합니다.",
             )
             return
         if self.monitor_running:
@@ -2303,14 +2353,10 @@ class FlowControlApp(tk.Tk):
             self.feedback_graph.clear()
             self.feedback_ao_graph.clear()
             sv = self.number_silent(self.sv, 0.0)
-            self.feedback_graph.set_scale(0, max(200.0, sv * 1.5), "cc/min")
-            try:
-                self.daq.write_inverter_run(True)
-                self.daq.write_inverter_run2(True)
-            except DaqError as exc:
-                self.feedback_running = False
-                self._safe_stop(exc)
-                return
+            sv2 = self.number_silent(self.sv2, 0.0)
+            self.feedback_graph.set_scale(
+                0, max(200.0, max(sv, sv2) * 1.5), "cc/min"
+            )
         else:
             self._stop_feedback_timer()
             self.feedback_running = False
@@ -2319,15 +2365,13 @@ class FlowControlApp(tk.Tk):
                 self.current_ao2 = self.daq.write_voltage(
                     0.0, self.channels.ao_pump2
                 )
-                self.daq.write_inverter_run(False)
-                self.daq.write_inverter_run2(False)
             except DaqError as exc:
                 self._safe_stop(exc)
                 return
-            self.output_value.configure(text=f"REF.W: {self.current_ao:.3f} V")
+            self.output_value.configure(text=f"AO0: {self.current_ao:.3f} V")
             if hasattr(self, "output_value2"):
                 self.output_value2.configure(
-                    text=f"REF.W: {self.current_ao2:.3f} V"
+                    text=f"AO2: {self.current_ao2:.3f} V"
                 )
 
         self.feedback_button.configure(
@@ -2539,14 +2583,6 @@ class FlowControlApp(tk.Tk):
             self.current_ao2 = self.daq.write_voltage(0.0, self.channels.ao_pump2)
         except DaqError as exc:
             stop_error += f" / AO2 정지 실패: {exc}"
-        try:
-            self.daq.write_inverter_run(False)
-        except DaqError as exc:
-            stop_error += f" / 인버터 RUN OFF 실패: {exc}"
-        try:
-            self.daq.write_inverter_run2(False)
-        except DaqError as exc:
-            stop_error += f" / 인버터 RUN2 OFF 실패: {exc}"
         self.mp5y.close()
         self.mp5y2.close()
         self._mp5y_ok = False
@@ -2560,9 +2596,9 @@ class FlowControlApp(tk.Tk):
             text="제어 시작",
             style="TouchStart.TButton" if self.touch_mode else "Start.TButton",
         )
-        self.output_value.configure(text=f"REF.W: {self.current_ao:.3f} V")
+        self.output_value.configure(text=f"AO0: {self.current_ao:.3f} V")
         if hasattr(self, "output_value2"):
-            self.output_value2.configure(text=f"REF.W: {self.current_ao2:.3f} V")
+            self.output_value2.configure(text=f"AO2: {self.current_ao2:.3f} V")
         port_text = (
             f"{self.mp5y_config.port} 연결 / MP5Y 응답 없음"
             if self._mp5y_port_present
@@ -2617,14 +2653,6 @@ class FlowControlApp(tk.Tk):
         except DaqError as exc:
             stop_error += f" / 점화기 SSR OFF 실패: {exc}"
         try:
-            self.daq.write_inverter_run(False)
-        except DaqError as exc:
-            stop_error += f" / 인버터 RUN OFF 실패: {exc}"
-        try:
-            self.daq.write_inverter_run2(False)
-        except DaqError as exc:
-            stop_error += f" / 인버터 RUN2 OFF 실패: {exc}"
-        try:
             self.spare_do_on = self.daq.write_spare_do(False)
         except DaqError as exc:
             stop_error += f" / DO 5 OFF 실패: {exc}"
@@ -2639,9 +2667,9 @@ class FlowControlApp(tk.Tk):
             self._set_igniter_button(False)
         self.level_master_status.configure(text="안전 정지 · 모든 밸브 닫힘")
         self._render_level_states([False] * 6, ["오류 · 안전 닫힘"] * 3)
-        self.output_value.configure(text=f"REF.W: {self.current_ao:.3f} V")
+        self.output_value.configure(text=f"AO0: {self.current_ao:.3f} V")
         if hasattr(self, "output_value2"):
-            self.output_value2.configure(text=f"REF.W: {self.current_ao2:.3f} V")
+            self.output_value2.configure(text=f"AO2: {self.current_ao2:.3f} V")
         self._refresh_ng_ao_label()
         self._link_ok = False
         self._mp5y_ok = False
@@ -2834,12 +2862,15 @@ class FlowControlApp(tk.Tk):
             return self.mp5y.simulate_flow(pulse_ml=pulse_ml)
 
     def _read_mp5y2(self, pulse_ml: float) -> tuple[float, float, int, int]:
+        """Read pump2 flow; optional meter returns zero PV when unplugged."""
+        if not self.mp5y2.port_present():
+            return (0.0, float("nan"), 0, 0)
         self._apply_mp5y2_options(pulse_ml)
         try:
             return self.mp5y2.read_flow(pulse_ml=pulse_ml)
         except Mp5yError:
             if self.daq.available:
-                raise
+                return (0.0, float("nan"), 0, 0)
             return self.mp5y2.simulate_flow(pulse_ml=pulse_ml)
 
     def _update_monitor(self) -> None:
@@ -2884,11 +2915,12 @@ class FlowControlApp(tk.Tk):
         self.filtered_flow = pv
         self.filtered_flow2 = pv2
         sv = self.number_silent(self.sv, 0.0)
+        sv2 = self.number_silent(self.sv2, 0.0)
         p_gain = self.number_silent(self.p_gain, 0.02)
         i_gain = self.number_silent(self.i_gain, 0.005)
 
         ao = self.pi.update(sv, pv, p_gain, i_gain, dt)
-        ao2 = self.pi2.update(sv, pv2, p_gain, i_gain, dt)
+        ao2 = self.pi2.update(sv2, pv2, p_gain, i_gain, dt)
         self.current_ao = self.daq.write_voltage(ao)
         self.current_ao2 = self.daq.write_voltage(ao2, self.channels.ao_pump2)
 
@@ -2898,20 +2930,30 @@ class FlowControlApp(tk.Tk):
             self.focus_pv.configure(text=f"PV  {pv:.1f}")
             self.focus_pv2.configure(text=f"PV  {pv2:.1f}")
             self.focus_sv.configure(text=f"SV  {sv:.1f}")
+            if hasattr(self, "focus_sv2"):
+                self.focus_sv2.configure(text=f"SV  {sv2:.1f}")
         else:
             self.focus_pv.configure(text=f"PV  {pv:.1f} cc/min")
             self.focus_pv2.configure(text=f"PV  {pv2:.1f} cc/min")
         self.focus_err.configure(text=f"오차: {sv - pv:+.1f} cc/min")
+        if hasattr(self, "focus_err2"):
+            self.focus_err2.configure(text=f"오차: {sv2 - pv2:+.1f} cc/min")
         if self.mp5y_config.value_mode == "flow_ccpm":
             self.fb_hz.configure(text=f"MP5Y 표시: {raw_flow:.2f} cc/min")
-            self.fb_hz2.configure(text=f"MP5Y 표시: {raw_flow2:.2f} cc/min")
         else:
             self.fb_hz.configure(text=f"MP5Y 표시: {hz_text} Hz")
-            self.fb_hz2.configure(text=f"MP5Y 표시: {hz2_text} Hz")
-        self.output_value.configure(text=f"REF.W: {self.current_ao:.3f} V")
+        if not self._mp5y2_port_present:
+            self.fb_hz2.configure(text="MP5Y2: 미연결")
+        elif self.mp5y2_config.value_mode == "flow_ccpm":
+            self.fb_hz2.configure(text=f"MP5Y2 표시: {raw_flow2:.2f} cc/min")
+        else:
+            self.fb_hz2.configure(text=f"MP5Y2 표시: {hz2_text} Hz")
+        self.output_value.configure(text=f"AO0: {self.current_ao:.3f} V")
         if hasattr(self, "output_value2"):
-            self.output_value2.configure(text=f"REF.W: {self.current_ao2:.3f} V")
-        self.feedback_graph.set_scale(0, max(200.0, sv * 1.5), "cc/min")
+            self.output_value2.configure(text=f"AO2: {self.current_ao2:.3f} V")
+        self.feedback_graph.set_scale(
+            0, max(200.0, max(sv, sv2) * 1.5), "cc/min"
+        )
         self.feedback_graph.add(pv, sv)
         self.feedback_ao_graph.add(self.current_ao)
 
@@ -2921,6 +2963,7 @@ class FlowControlApp(tk.Tk):
         data = {
             "pulse_ml": self.fb_pulse_ml.get(),
             "sv": self.sv.get(),
+            "sv2": self.sv2.get(),
             "p_gain": self.p_gain.get(),
             "i_gain": self.i_gain.get(),
             "lpf_cutoff": self.lpf_cutoff.get(),
@@ -2964,6 +3007,7 @@ class FlowControlApp(tk.Tk):
         self.pulse_ml.set(str(data.get("pulse_ml", "0.46")))
         self.fb_pulse_ml.set(str(data.get("pulse_ml", "0.46")))
         self.sv.set(str(data.get("sv", "0.0")))
+        self.sv2.set(str(data.get("sv2", "0.0")))
         self.p_gain.set(str(data.get("p_gain", "0.020")))
         self.i_gain.set(str(data.get("i_gain", "0.005")))
         self.lpf_cutoff.set(str(data.get("lpf_cutoff", "0.8")))
