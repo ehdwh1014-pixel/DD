@@ -39,6 +39,7 @@ class ChannelConfig:
     ao_pump: str = f"{AO_MODULE}/ao0"
     ao_ng_pump: str = f"{AO_MODULE}/ao1"
     spare_ao: str = f"{AO_MODULE}/ao2"
+    ao_pump2: str = f"{AO_MODULE}/ao2"
     level_inputs: str = f"{DI_MODULE}/port0/line0:5"
     valve_outputs: str = f"{DO_MODULE}/port0/line0:2"
     # IFW15 flame detector (potential-free contacts) -> NI 9422 DI6 (line6).
@@ -47,6 +48,7 @@ class ChannelConfig:
     igniter_output: str = f"{DO_MODULE}/port0/line3"
     # LS iG5A RUN: DO4 sinks P1(FX) to COM when ON (NPN mode).
     inverter_run: str = f"{DO_MODULE}/port0/line4"
+    inverter_run2: str = f"{DO_MODULE}/port0/line5"
     spare_do: str = f"{DO_MODULE}/port0/line5"
     tc_k_inputs: str = f"{TC_MODULE}/ai0:4"
     tc_t_inputs: str = f"{TC_MODULE}/ai5:9"
@@ -79,10 +81,13 @@ class DaqService:
         self._flame_channel: str | None = None
         self._igniter_channel: str | None = None
         self._inverter_channel: str | None = None
+        self._do_inverter2_task = None
+        self._inverter2_channel: str | None = None
         self._spare_do_channel: str | None = None
         self._last_valves = [False, False, False]
         self._last_igniter = False
         self._last_inverter = False
+        self._last_inverter2 = False
         self._last_spare_do = False
         try:
             import nidaqmx  # type: ignore
@@ -331,6 +336,39 @@ class DaqService:
             self._close_do_inverter_task()
             raise DaqError(f"인버터 RUN(DO4) 출력 오류: {exc}") from exc
 
+    def write_inverter_run2(self, on: bool) -> bool:
+        """Write second LS iG5A FX via DO5 (default) sink to COM."""
+        on = bool(on)
+        channel = (self.channels.inverter_run2 or "").strip()
+        if not channel:
+            self._last_inverter2 = on
+            return on
+        if not (self.level_available and self._nidaqmx):
+            self._last_inverter2 = on
+            return on
+        try:
+            if (
+                self._do_inverter2_task is not None
+                and self._inverter2_channel != channel
+            ):
+                self._close_do_inverter2_task()
+            if self._do_inverter2_task is None:
+                from nidaqmx.constants import LineGrouping  # type: ignore
+
+                task = self._nidaqmx.Task()
+                task.do_channels.add_do_chan(
+                    channel,
+                    line_grouping=LineGrouping.CHAN_PER_LINE,
+                )
+                self._do_inverter2_task = task
+                self._inverter2_channel = channel
+            self._do_inverter2_task.write([on], auto_start=True)
+            self._last_inverter2 = on
+            return on
+        except Exception as exc:  # noqa: BLE001
+            self._close_do_inverter2_task()
+            raise DaqError(f"인버터 RUN2 출력 오류: {exc}") from exc
+
     def write_spare_do(self, on: bool) -> bool:
         """Write the spare NI 9477 sinking output (default DO5)."""
         on = bool(on)
@@ -440,6 +478,16 @@ class DaqService:
             except Exception:  # noqa: BLE001
                 pass
 
+    def _close_do_inverter2_task(self) -> None:
+        task = self._do_inverter2_task
+        self._do_inverter2_task = None
+        self._inverter2_channel = None
+        if task is not None:
+            try:
+                task.close()
+            except Exception:  # noqa: BLE001
+                pass
+
     def _close_do_spare_task(self) -> None:
         task = self._do_spare_task
         self._do_spare_task = None
@@ -478,6 +526,10 @@ class DaqService:
         except DaqError:
             pass
         try:
+            self.write_inverter_run2(False)
+        except DaqError:
+            pass
+        try:
             self.write_spare_do(False)
         except DaqError:
             pass
@@ -493,11 +545,16 @@ class DaqService:
             self.write_voltage(0.0, self.channels.spare_ao)
         except DaqError:
             pass
+        try:
+            self.write_voltage(0.0, self.channels.ao_pump2)
+        except DaqError:
+            pass
         self._close_di_task()
         self._close_do_task()
         self._close_di_flame_task()
         self._close_do_igniter_task()
         self._close_do_inverter_task()
+        self._close_do_inverter2_task()
         self._close_do_spare_task()
         self._close_tc_task()
         self._close_ao_task()
