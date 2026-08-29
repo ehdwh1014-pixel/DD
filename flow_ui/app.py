@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import sys
 import threading
 import time
@@ -194,16 +195,22 @@ class FlowControlApp(tk.Tk):
         self.ICON_PNG = self.ICON_DIR / "app_icon.png"
         screen_w = max(self.winfo_screenwidth(), 800)
         screen_h = max(self.winfo_screenheight(), 480)
-        self.touch_mode = screen_w <= 1100 or screen_h <= 700
+        # 24″ desktop by default; set PULSEFLOW_TOUCH=1 only for legacy 7″ touch UI.
+        self.touch_mode = os.environ.get("PULSEFLOW_TOUCH", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
         if self.touch_mode:
             width, height = min(screen_w, 1024), min(screen_h, 600)
             self.geometry(f"{width}x{height}+0+0")
             self.minsize(min(800, width), min(480, height))
         else:
-            width = min(1024, int(screen_w * 0.90))
-            height = min(600, int(screen_h * 0.82))
+            width = min(1600, int(screen_w * 0.92))
+            height = min(920, int(screen_h * 0.88))
             self.geometry(f"{width}x{height}")
-            self.minsize(min(900, width), min(520, height))
+            self.minsize(1280, 720)
         self.configure(bg=COLORS["bg"])
         self._apply_window_icon()
 
@@ -349,6 +356,18 @@ class FlowControlApp(tk.Tk):
             background=COLORS["panel"],
             foreground=COLORS["value"],
             font=("Segoe UI", 16, "bold"),
+        )
+        style.configure(
+            "InjectionCaption.TLabel",
+            background=COLORS["panel"],
+            foreground=COLORS["title"],
+            font=("Segoe UI", 14, "bold"),
+        )
+        style.configure(
+            "InjectionTime.TLabel",
+            background=COLORS["panel"],
+            foreground=COLORS["value"],
+            font=("Segoe UI", 28, "bold"),
         )
         style.configure(
             "FlameStatus.TLabel",
@@ -1003,28 +1022,15 @@ class FlowControlApp(tk.Tk):
             controls, text="제어 시작", style="Start.TButton", command=self.toggle_feedback
         )
         self.feedback_button.grid(row=11, column=0, columnspan=2, sticky="ew")
-        self.control_start_label = ttk.Label(
-            controls, text="제어 시작  --:--:--", style="Hint.TLabel"
-        )
-        self.control_start_label.grid(row=12, column=0, columnspan=2, sticky="w", pady=(6, 0))
-        injection_row = ttk.Frame(controls, style="Panel.TFrame")
-        injection_row.grid(row=13, column=0, columnspan=2, sticky="ew", pady=(2, 0))
-        self.injection_time_label = ttk.Label(
-            injection_row, text="주입 00:00:00", style="Hint.TLabel"
-        )
-        self.injection_time_label.pack(side="left")
-        ttk.Button(
-            injection_row, text="초기화", command=self.reset_injection_time
-        ).pack(side="right")
 
         ttk.Separator(controls, orient="horizontal").grid(
-            row=14, column=0, columnspan=2, sticky="ew", pady=(10, 6)
+            row=12, column=0, columnspan=2, sticky="ew", pady=(10, 6)
         )
         ttk.Label(controls, text="NG PUMP (AO1)", style="PanelTitle.TLabel").grid(
-            row=15, column=0, columnspan=2, sticky="w"
+            row=13, column=0, columnspan=2, sticky="w"
         )
         ng_row = ttk.Frame(controls, style="Panel.TFrame")
-        ng_row.grid(row=16, column=0, columnspan=2, sticky="ew", pady=(4, 0))
+        ng_row.grid(row=14, column=0, columnspan=2, sticky="ew", pady=(4, 0))
         ng_row.columnconfigure(0, weight=1)
         ttk.Entry(
             ng_row,
@@ -1044,9 +1050,9 @@ class FlowControlApp(tk.Tk):
         self.ng_ao_value = ttk.Label(
             controls, text="NG: 0.000 V", style="ValueSmall.TLabel"
         )
-        self.ng_ao_value.grid(row=17, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        self.ng_ao_value.grid(row=15, column=0, columnspan=2, sticky="w", pady=(4, 0))
 
-        # --- Col 1: Pump 1 ---
+        # --- Col 1: Pump 1 + graphs + injection timer ---
         pump1 = self.panel(page)
         pump1.configure(padding=8)
         self.place_panel(pump1, row=0, column=1, sticky="nsew", padx=(0, 4))
@@ -1081,7 +1087,45 @@ class FlowControlApp(tk.Tk):
         self.output_value = ttk.Label(pump1, text="AO0  0.000 V", style="ValueSmall.TLabel")
         self.output_value.pack(anchor="w", pady=(6, 0))
 
-        # --- Col 2: Pump 2 ---
+        ttk.Separator(pump1, orient="horizontal").pack(fill="x", pady=(8, 6))
+        self.feedback_graph = TrendGraph(
+            pump1,
+            "펌프1 PV / SV",
+            [("PV", COLORS["pv"]), ("SV", COLORS["sv"])],
+            0,
+            200,
+            "cc/min",
+        )
+        self.feedback_graph.configure(height=118)
+        self.feedback_graph.pack(fill="both", expand=True, pady=(0, 4))
+        self.feedback_ao_graph = TrendGraph(
+            pump1, "펌프1 AO0", [("AO0", COLORS["ao"])], 0, 5, "V"
+        )
+        self.feedback_ao_graph.configure(height=78)
+        self.feedback_ao_graph.pack(fill="x", pady=(0, 6))
+
+        timing_block = ttk.Frame(pump1, style="Panel.TFrame")
+        timing_block.pack(fill="x", pady=(8, 0))
+        self.control_start_label = ttk.Label(
+            timing_block, text="제어 시작  --:--:--", style="ValueCompact.TLabel"
+        )
+        self.control_start_label.pack(anchor="w", pady=(0, 6))
+        injection_block = ttk.Frame(timing_block, style="Panel.TFrame")
+        injection_block.pack(fill="x")
+        injection_header = ttk.Frame(injection_block, style="Panel.TFrame")
+        injection_header.pack(fill="x")
+        ttk.Label(
+            injection_header, text="물 주입시간", style="InjectionCaption.TLabel"
+        ).pack(side="left")
+        ttk.Button(
+            injection_header, text="초기화", command=self.reset_injection_time
+        ).pack(side="right")
+        self.injection_time_label = ttk.Label(
+            injection_block, text="00:00:00", style="InjectionTime.TLabel"
+        )
+        self.injection_time_label.pack(anchor="w", pady=(4, 0))
+
+        # --- Col 2: Pump 2 + graphs ---
         pump2 = self.panel(page)
         pump2.configure(padding=8)
         self.place_panel(pump2, row=0, column=2, sticky="nsew", padx=(0, 4))
@@ -1111,28 +1155,28 @@ class FlowControlApp(tk.Tk):
         )
         self.output_value2.pack(anchor="w", pady=(6, 0))
 
-        # --- Col 3: Graphs + comm + IGN/Coolint ---
-        monitor = self.panel(page)
-        monitor.configure(padding=6)
-        self.place_panel(monitor, row=0, column=3, sticky="nsew")
-        ttk.Label(monitor, text="추이 / 상태", style="PanelTitle.TLabel").pack(anchor="w")
-        self.feedback_graph = TrendGraph(
-            monitor,
-            "PV / SV",
+        ttk.Separator(pump2, orient="horizontal").pack(fill="x", pady=(8, 6))
+        self.feedback_graph2 = TrendGraph(
+            pump2,
+            "펌프2 PV / SV",
             [("PV", COLORS["pv"]), ("SV", COLORS["sv"])],
             0,
             200,
             "cc/min",
         )
-        self.feedback_graph.configure(width=220, height=108)
-        self.feedback_graph.pack(fill="x", pady=(4, 4))
-        self.feedback_ao_graph = TrendGraph(
-            monitor, "AO (V)", [("AO0", COLORS["ao"])], 0, 5, "V"
+        self.feedback_graph2.configure(height=118)
+        self.feedback_graph2.pack(fill="both", expand=True, pady=(0, 4))
+        self.feedback_ao_graph2 = TrendGraph(
+            pump2, "펌프2 AO2", [("AO2", COLORS["ao"])], 0, 5, "V"
         )
-        self.feedback_ao_graph.configure(width=220, height=72)
-        self.feedback_ao_graph.pack(fill="x")
+        self.feedback_ao_graph2.configure(height=78)
+        self.feedback_ao_graph2.pack(fill="x")
 
-        ttk.Separator(monitor, orient="horizontal").pack(fill="x", pady=(6, 6))
+        # --- Col 3: comm + IGN/Coolint ---
+        monitor = self.panel(page)
+        monitor.configure(padding=6)
+        self.place_panel(monitor, row=0, column=3, sticky="nsew")
+        ttk.Label(monitor, text="통신 / 보조", style="PanelTitle.TLabel").pack(anchor="w")
         comm_row = ttk.Frame(monitor, style="Panel.TFrame")
         comm_row.pack(fill="x")
         comm_row.columnconfigure((0, 1), weight=1)
@@ -2276,11 +2320,15 @@ class FlowControlApp(tk.Tk):
             self._refresh_control_start_label()
             self.feedback_graph.clear()
             self.feedback_ao_graph.clear()
+            if hasattr(self, "feedback_graph2"):
+                self.feedback_graph2.clear()
+                self.feedback_ao_graph2.clear()
             sv = self.number_silent(self.sv, 0.0)
             sv2 = self.number_silent(self.sv2, 0.0)
-            self.feedback_graph.set_scale(
-                0, max(200.0, max(sv, sv2) * 1.5), "cc/min"
-            )
+            scale_max = max(200.0, max(sv, sv2) * 1.5)
+            self.feedback_graph.set_scale(0, scale_max, "cc/min")
+            if hasattr(self, "feedback_graph2"):
+                self.feedback_graph2.set_scale(0, scale_max, "cc/min")
         else:
             self._stop_feedback_timer()
             self.feedback_running = False
@@ -2715,10 +2763,13 @@ class FlowControlApp(tk.Tk):
         if getattr(self, "injection_time_label", None) is not None:
             clock = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
             if self.touch_mode:
-                text = f"물 주입시간  {clock}"
+                self.injection_time_label.configure(
+                    text=f"물 주입시간  {clock}", style="ValueSmall.TLabel"
+                )
             else:
-                text = f"주입 {clock}"
-            self.injection_time_label.configure(text=text)
+                self.injection_time_label.configure(
+                    text=clock, style="InjectionTime.TLabel"
+                )
 
     def _tick_process_clock(self) -> None:
         """Refresh wall clock display."""
@@ -2870,13 +2921,17 @@ class FlowControlApp(tk.Tk):
             self.output_value.configure(text=f"AO0  {self.current_ao:.3f} V")
             if hasattr(self, "output_value2"):
                 self.output_value2.configure(text=f"AO2  {self.current_ao2:.3f} V")
-        self.feedback_graph.set_scale(
-            0, max(200.0, max(sv, sv2) * 1.5), "cc/min"
-        )
+        scale_max = max(200.0, max(sv, sv2) * 1.5)
+        self.feedback_graph.set_scale(0, scale_max, "cc/min")
+        if hasattr(self, "feedback_graph2"):
+            self.feedback_graph2.set_scale(0, scale_max, "cc/min")
         now_mono = time.monotonic()
         redraw = (now_mono - self._last_graph_draw_at) * 1000.0 >= self.GRAPH_MS
         self.feedback_graph.add(pv, sv, redraw=redraw)
         self.feedback_ao_graph.add(self.current_ao, redraw=redraw)
+        if hasattr(self, "feedback_graph2"):
+            self.feedback_graph2.add(pv2, sv2, redraw=redraw)
+            self.feedback_ao_graph2.add(self.current_ao2, redraw=redraw)
         if redraw:
             self._last_graph_draw_at = now_mono
 
