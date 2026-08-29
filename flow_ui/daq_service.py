@@ -2,23 +2,29 @@
 
 Hardware (NI MAX):
   Chassis : cDAQ-9178 -> cDAQ2
-  Slot 1  : NI 9264   -> cDAQ2Mod1  (REF.W ao0 + NG PUMP ao1 + spare ao2)
-  Slot 2  : NI 9422   -> cDAQ2Mod2  (three HIGH/LOW level inputs, DI0..DI5)
-  Slot 3  : NI 9477   -> cDAQ2Mod3  (valves DO0..2, igniter DO3, FX DO4, spare DO5)
+  Slot 1  : NI 9264   -> cDAQ2Mod1  (AO0 pump1 + AO1 NG + AO2 pump2)
+  Slot 2  : NI 9422   -> cDAQ2Mod2  (level DI0..5)
+  Slot 3  : NI 9477   -> cDAQ2Mod3  (valves DO0..2, igniter DO3, Coolint P DO4)
   Slot 4  : NI 9214   -> cDAQ2Mod4  (optional TC: K ai0..4, T ai5..9)
 
-LS iG5A wiring (NPN / sink):
-  9264 ao0 (REF.W) -> V1,  9264 AO COM -> CM
-  9264 ao1 (NG PUMP) -> NG pump command 0~5 V
-  9477 DO4  -> P1(FX), 9477 COM -> CM
-  Measured NI 9923 screws: DO0..4 = #1..#5, COM = #9 (also 10/27/28)
-
-Flow PV is read from Autonics MP5Y-25 over USB-RS485 (see mp5y_service.py).
+Uses flow_ui.nidaqmx_lite (ctypes nicaiu.dll) so the frozen EXE does not
+embed the heavy Python nidaqmx/numpy packages.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from threading import Lock
+
+from flow_ui.nidaqmx_lite import (
+    DAQmx_Val_ThermocoupleType_K,
+    DAQmx_Val_ThermocoupleType_T,
+    DaqmxLite,
+    DaqmxLiteError,
+    DeviceInfo,
+    FakeDaqmx,
+    simulation_enabled,
+)
 
 
 CHASSIS = "cDAQ2"
@@ -26,6 +32,35 @@ AO_MODULE = "cDAQ2Mod1"  # NI 9264
 DI_MODULE = "cDAQ2Mod2"  # NI 9422
 DO_MODULE = "cDAQ2Mod3"  # NI 9477
 TC_MODULE = "cDAQ2Mod4"  # optional NI 9214
+
+PRODUCT_AO = "9264"
+PRODUCT_DI = "9422"
+PRODUCT_DO = "9477"
+PRODUCT_TC = "9214"
+
+
+def device_from_channel(channel: str) -> str:
+    return channel.split("/", 1)[0]
+
+
+def product_matches(product_type: str, model: str) -> bool:
+    return model in str(product_type or "").replace(" ", "").upper()
+
+
+def discover_modules_by_product(devices: dict[str, object]) -> dict[str, str]:
+    """Map AO/DI/DO/TC roles to NI MAX device names by module model."""
+    roles = ("ao", "di", "do", "tc")
+    models = (PRODUCT_AO, PRODUCT_DI, PRODUCT_DO, PRODUCT_TC)
+    found: dict[str, str] = {}
+    for device in devices.values():
+        product = str(getattr(device, "product_type", "") or "")
+        for role, model in zip(roles, models):
+            if role in found:
+                continue
+            if product_matches(product, model):
+                found[role] = str(getattr(device, "name", ""))
+                break
+    return found
 
 
 class DaqError(RuntimeError):
@@ -39,21 +74,43 @@ class ChannelConfig:
     ao_pump: str = f"{AO_MODULE}/ao0"
     ao_ng_pump: str = f"{AO_MODULE}/ao1"
     spare_ao: str = f"{AO_MODULE}/ao2"
+    ao_pump2: str = f"{AO_MODULE}/ao2"
     level_inputs: str = f"{DI_MODULE}/port0/line0:5"
     valve_outputs: str = f"{DO_MODULE}/port0/line0:2"
-    # IFW15 flame detector (potential-free contacts) -> NI 9422 DI6 (line6).
-    # SSR input -> NI 9477 DO3 (line3). NI 9477 is sinking output.
-    flame_input: str = f"{DI_MODULE}/port0/line6"
     igniter_output: str = f"{DO_MODULE}/port0/line3"
-    # LS iG5A RUN: DO4 sinks P1(FX) to COM when ON (NPN mode).
-    inverter_run: str = f"{DO_MODULE}/port0/line4"
-    spare_do: str = f"{DO_MODULE}/port0/line5"
+    spare_do4: str = f"{DO_MODULE}/port0/line4"
+    inverter_run: str = ""
+    inverter_run2: str = ""
     tc_k_inputs: str = f"{TC_MODULE}/ai0:4"
     tc_t_inputs: str = f"{TC_MODULE}/ai5:9"
 
 
+def apply_module_names(
+    channels: ChannelConfig,
+    *,
+    ao: str | None = None,
+    di: str | None = None,
+    do: str | None = None,
+    tc: str | None = None,
+) -> None:
+    if ao:
+        channels.ao_pump = f"{ao}/ao0"
+        channels.ao_ng_pump = f"{ao}/ao1"
+        channels.spare_ao = f"{ao}/ao2"
+        channels.ao_pump2 = f"{ao}/ao2"
+    if di:
+        channels.level_inputs = f"{di}/port0/line0:5"
+    if do:
+        channels.valve_outputs = f"{do}/port0/line0:2"
+        channels.igniter_output = f"{do}/port0/line3"
+        channels.spare_do4 = f"{do}/port0/line4"
+    if tc:
+        channels.tc_k_inputs = f"{tc}/ai0:4"
+        channels.tc_t_inputs = f"{tc}/ai5:9"
+
+
 class DaqService:
-    """Analog output access with graceful simulation fallback."""
+    """Analog/digital I/O access with graceful simulation fallback."""
 
     REQUIRED_DEVICES = (AO_MODULE, DI_MODULE, DO_MODULE)
 
@@ -64,69 +121,124 @@ class DaqService:
         self.tc_available = False
         self.error = "NI-DAQmx를 확인하는 중입니다."
         self.device_summary = "NI 9264 / 9422 / 9477 대기"
-        self._nidaqmx = None
+        self._daq: DaqmxLite | None = None
         self._ao_tasks: dict[str, object] = {}
         self._di_task = None
         self._do_task = None
-        self._di_flame_task = None
         self._do_igniter_task = None
         self._do_inverter_task = None
-        self._do_spare_task = None
+        self._do_inverter2_task = None
+        self._do_spare4_task = None
         self._tc_task = None
         self._tc_channels: tuple[str, str] | None = None
+        self._tc_lock = Lock()
         self._level_channel: str | None = None
         self._valve_channel: str | None = None
-        self._flame_channel: str | None = None
         self._igniter_channel: str | None = None
         self._inverter_channel: str | None = None
-        self._spare_do_channel: str | None = None
+        self._inverter2_channel: str | None = None
+        self._spare_do4_channel: str | None = None
         self._last_valves = [False, False, False]
         self._last_igniter = False
         self._last_inverter = False
-        self._last_spare_do = False
+        self._last_inverter2 = False
+        self._last_spare_do4 = False
+        self.simulated = False
         try:
-            import nidaqmx  # type: ignore
+            if simulation_enabled():
+                self._daq = FakeDaqmx()
+                self.simulated = True
+                self.error = "시뮬레이션 모드"
+            else:
+                self._daq = DaqmxLite()
+        except DaqmxLiteError as exc:
+            self.error = f"NI-DAQmx Runtime 없음 (시뮬레이션). {exc}"
 
-            self._nidaqmx = nidaqmx
-        except ImportError:
-            self.error = "nidaqmx 패키지 없음 (시뮬레이션). EXE 재빌드 또는 NI-DAQmx 확인."
+    def _reset_io_tasks(self) -> None:
+        self._close_di_task()
+        self._close_do_task()
+        self._close_do_igniter_task()
+        self._close_do_inverter_task()
+        self._close_do_inverter2_task()
+        self._close_do_spare4_task()
+        self._close_tc_task()
+        self._close_ao_task()
+
+    def _try_auto_map_devices(self, devices: dict[str, DeviceInfo]) -> dict[str, str]:
+        configured = {
+            "ao": device_from_channel(self.channels.ao_pump),
+            "di": device_from_channel(self.channels.level_inputs),
+            "do": device_from_channel(self.channels.valve_outputs),
+            "tc": device_from_channel(self.channels.tc_k_inputs),
+        }
+        discovered = discover_modules_by_product(devices)
+        remap: dict[str, str] = {}
+        for role in ("ao", "di", "do", "tc"):
+            current = configured[role]
+            if current in devices:
+                continue
+            candidate = discovered.get(role)
+            if candidate and candidate != current:
+                remap[role] = candidate
+        if not remap:
+            return {}
+        apply_module_names(self.channels, **remap)
+        self._reset_io_tasks()
+        return remap
 
     def check_connection(self) -> bool:
-        if self._nidaqmx is None:
+        if self._daq is None:
             self.available = False
             self.level_available = False
             self.tc_available = False
             return False
         try:
-            devices = {
-                device.name: device
-                for device in self._nidaqmx.system.System.local().devices
-            }
+            devices = self._daq.list_devices()
             found = sorted(devices)
-            self.available = AO_MODULE in devices
-            self.level_available = DI_MODULE in devices and DO_MODULE in devices
-            tc_device = self.channels.tc_k_inputs.split("/", 1)[0]
+            auto_map = self._try_auto_map_devices(devices)
+
+            ao_device = device_from_channel(self.channels.ao_pump)
+            di_device = device_from_channel(self.channels.level_inputs)
+            do_device = device_from_channel(self.channels.valve_outputs)
+            tc_device = device_from_channel(self.channels.tc_k_inputs)
+
+            self.available = ao_device in devices
+            self.level_available = di_device in devices and do_device in devices
             self.tc_available = tc_device in devices
             if not self.tc_available:
                 self._close_tc_task()
-            missing = [name for name in self.REQUIRED_DEVICES if name not in devices]
-            if not missing:
-                self.error = "연결됨"
+
+            missing = [
+                name
+                for name, ok in (
+                    (ao_device, self.available),
+                    (di_device, di_device in devices),
+                    (do_device, do_device in devices),
+                )
+                if not ok
+            ]
+            if self.available and self.level_available:
+                if auto_map:
+                    mapped = ", ".join(f"{role}={name}" for role, name in auto_map.items())
+                    self.error = f"연결됨 · 자동매칭 {mapped}"
+                else:
+                    self.error = "연결됨"
             elif found:
                 self.error = (
                     f"장치명 불일치 · 필요 {', '.join(missing)} / "
-                    f"PC감지 {', '.join(found)}"
+                    f"PC감지 {', '.join(found)} · 설정에서 채널명 수정 또는 "
+                    "NI MAX에서 장치명 확인"
                 )
             else:
                 self.error = "NI 장치 없음 · NI-DAQmx/케이블 확인"
             states = [
-                f"9264 {'OK' if self.available else '없음'}",
-                f"9422 {'OK' if DI_MODULE in devices else '없음'}",
-                f"9477 {'OK' if DO_MODULE in devices else '없음'}",
+                f"9264({ao_device}) {'OK' if self.available else '없음'}",
+                f"9422({di_device}) {'OK' if di_device in devices else '없음'}",
+                f"9477({do_device}) {'OK' if do_device in devices else '없음'}",
                 f"9214({tc_device}) {'OK' if self.tc_available else '선택/없음'}",
             ]
             self.device_summary = " / ".join(states)
-        except Exception as exc:  # noqa: BLE001 - keep UI alive on driver errors
+        except Exception as exc:  # noqa: BLE001
             self.available = False
             self.level_available = False
             self.tc_available = False
@@ -135,76 +247,54 @@ class DaqService:
         return self.available and self.level_available
 
     def read_thermocouples(self) -> list[float]:
-        """Read optional NI 9214 channels: K ai0..4, T ai5..9 in °C.
-
-        DAQmx applies the NI 9214 built-in cold-junction compensation (CJC).
-        """
-        if not (self.tc_available and self._nidaqmx):
+        if not (self.tc_available and self._daq):
             raise DaqError("NI 9214가 연결되지 않았습니다.")
         channels = (self.channels.tc_k_inputs, self.channels.tc_t_inputs)
-        try:
-            if self._tc_task is not None and self._tc_channels != channels:
-                self._close_tc_task()
-            if self._tc_task is None:
-                from nidaqmx.constants import (  # type: ignore
-                    CJCSource,
-                    TemperatureUnits,
-                    ThermocoupleType,
-                )
-
-                task = self._nidaqmx.Task()
-                task.ai_channels.add_ai_thrmcpl_chan(
-                    self.channels.tc_k_inputs,
-                    min_val=-200.0,
-                    max_val=1200.0,
-                    units=TemperatureUnits.DEG_C,
-                    thermocouple_type=ThermocoupleType.K,
-                    cjc_source=CJCSource.BUILT_IN,
-                )
-                task.ai_channels.add_ai_thrmcpl_chan(
-                    self.channels.tc_t_inputs,
-                    min_val=-200.0,
-                    max_val=400.0,
-                    units=TemperatureUnits.DEG_C,
-                    thermocouple_type=ThermocoupleType.T,
-                    cjc_source=CJCSource.BUILT_IN,
-                )
-                self._tc_task = task
-                self._tc_channels = channels
-            values = self._tc_task.read()
-            if not isinstance(values, (list, tuple)):
-                values = [values]
-            result = [float(value) for value in values]
-            if len(result) != 10:
-                raise DaqError(f"TC 입력 개수 오류: {len(result)} (필요 10)")
-            return result
-        except Exception as exc:  # noqa: BLE001
-            self._close_tc_task()
-            if isinstance(exc, DaqError):
-                raise
-            raise DaqError(f"NI 9214 TC 읽기 오류: {exc}") from exc
+        with self._tc_lock:
+            try:
+                if self._tc_task is not None and self._tc_channels != channels:
+                    self._close_tc_task_unlocked()
+                if self._tc_task is None:
+                    task = self._daq.create_task()
+                    self._daq.create_ai_thermocouple(
+                        task,
+                        self.channels.tc_k_inputs,
+                        tc_type=DAQmx_Val_ThermocoupleType_K,
+                        min_val=-200.0,
+                        max_val=1200.0,
+                    )
+                    self._daq.create_ai_thermocouple(
+                        task,
+                        self.channels.tc_t_inputs,
+                        tc_type=DAQmx_Val_ThermocoupleType_T,
+                        min_val=-200.0,
+                        max_val=400.0,
+                    )
+                    self._tc_task = task
+                    self._tc_channels = channels
+                values = self._daq.read_analog(self._tc_task, 10)
+                if len(values) != 10:
+                    raise DaqError(f"TC 입력 개수 오류: {len(values)} (필요 10)")
+                return values
+            except Exception as exc:  # noqa: BLE001
+                self._close_tc_task_unlocked()
+                if isinstance(exc, DaqError):
+                    raise
+                raise DaqError(f"NI 9214 TC 읽기 오류: {exc}") from exc
 
     def read_levels(self) -> list[bool]:
         """Read [HIGH1, LOW1, HIGH2, LOW2, HIGH3, LOW3]."""
-        if not (self.level_available and self._nidaqmx):
+        if not (self.level_available and self._daq):
             return [False] * 6
         try:
             if self._di_task is not None and self._level_channel != self.channels.level_inputs:
                 self._close_di_task()
             if self._di_task is None:
-                from nidaqmx.constants import LineGrouping  # type: ignore
-
-                task = self._nidaqmx.Task()
-                task.di_channels.add_di_chan(
-                    self.channels.level_inputs,
-                    line_grouping=LineGrouping.CHAN_PER_LINE,
-                )
+                task = self._daq.create_task()
+                self._daq.create_di_lines(task, self.channels.level_inputs)
                 self._di_task = task
                 self._level_channel = self.channels.level_inputs
-            values = self._di_task.read()
-            if isinstance(values, bool):
-                values = [values]
-            result = [bool(value) for value in values]
+            result = self._daq.read_digital_lines(self._di_task, 6)
             if len(result) != 6:
                 raise DaqError(f"레벨 입력 개수 오류: {len(result)}")
             return result
@@ -219,83 +309,40 @@ class DaqService:
         if len(opened) != 3:
             raise ValueError("밸브 출력은 3개여야 합니다.")
         values = [bool(value) for value in opened]
-        if not (self.level_available and self._nidaqmx):
+        if not (self.level_available and self._daq):
             self._last_valves = values
+            return values
+        if values == self._last_valves and self._do_task is not None:
             return values
         try:
             if self._do_task is not None and self._valve_channel != self.channels.valve_outputs:
                 self._close_do_task()
             if self._do_task is None:
-                from nidaqmx.constants import LineGrouping  # type: ignore
-
-                task = self._nidaqmx.Task()
-                task.do_channels.add_do_chan(
-                    self.channels.valve_outputs,
-                    line_grouping=LineGrouping.CHAN_PER_LINE,
-                )
+                task = self._daq.create_task()
+                self._daq.create_do_lines(task, self.channels.valve_outputs)
                 self._do_task = task
                 self._valve_channel = self.channels.valve_outputs
-            self._do_task.write(values, auto_start=True)
+            self._daq.write_digital_lines(self._do_task, values)
             self._last_valves = values
             return values
         except Exception as exc:  # noqa: BLE001
             self._close_do_task()
             raise DaqError(f"밸브 출력 오류: {exc}") from exc
 
-    def read_flame(self) -> bool:
-        """Read IFW15 flame detector contact (DI6).
-
-        Expected wiring:
-          DI+ <- external +24V (sensor contact supply)
-          DI- <- external 0V
-          NO/NC contact closure will make DI ON depending on wiring.
-        """
-        if not (self.level_available and self._nidaqmx):
-            return False
-        try:
-            if self._di_flame_task is not None and self._flame_channel != self.channels.flame_input:
-                self._close_di_flame_task()
-            if self._di_flame_task is None:
-                from nidaqmx.constants import LineGrouping  # type: ignore
-
-                task = self._nidaqmx.Task()
-                task.di_channels.add_di_chan(
-                    self.channels.flame_input,
-                    line_grouping=LineGrouping.CHAN_PER_LINE,
-                )
-                self._di_flame_task = task
-                self._flame_channel = self.channels.flame_input
-            value = self._di_flame_task.read()
-            # read() may return bool or list[bool] depending on grouping
-            if isinstance(value, bool):
-                return value
-            if isinstance(value, (list, tuple)) and value:
-                return bool(value[0])
-            return bool(value)
-        except Exception as exc:  # noqa: BLE001
-            self._close_di_flame_task()
-            raise DaqError(f"화염 DI 읽기 오류: {exc}") from exc
-
     def write_igniter(self, on: bool) -> bool:
-        """Write SSR input control (DO3)."""
         on = bool(on)
-        if not (self.level_available and self._nidaqmx):
+        if not (self.level_available and self._daq):
             self._last_igniter = on
             return on
         try:
             if self._do_igniter_task is not None and self._igniter_channel != self.channels.igniter_output:
                 self._close_do_igniter_task()
             if self._do_igniter_task is None:
-                from nidaqmx.constants import LineGrouping  # type: ignore
-
-                task = self._nidaqmx.Task()
-                task.do_channels.add_do_chan(
-                    self.channels.igniter_output,
-                    line_grouping=LineGrouping.CHAN_PER_LINE,
-                )
+                task = self._daq.create_task()
+                self._daq.create_do_lines(task, self.channels.igniter_output)
                 self._do_igniter_task = task
                 self._igniter_channel = self.channels.igniter_output
-            self._do_igniter_task.write([on], auto_start=True)
+            self._daq.write_digital_lines(self._do_igniter_task, [on])
             self._last_igniter = on
             return on
         except Exception as exc:  # noqa: BLE001
@@ -303,75 +350,97 @@ class DaqService:
             raise DaqError(f"점화기 SSR 출력 오류: {exc}") from exc
 
     def write_inverter_run(self, on: bool) -> bool:
-        """Write LS iG5A FX (P1) via DO4 sink to COM."""
+        """Optional FX DO. No-op when inverter_run channel is empty."""
         on = bool(on)
-        if not (self.level_available and self._nidaqmx):
+        channel = (self.channels.inverter_run or "").strip()
+        if not channel:
+            self._last_inverter = on
+            return on
+        if not (self.level_available and self._daq):
             self._last_inverter = on
             return on
         try:
             if (
                 self._do_inverter_task is not None
-                and self._inverter_channel != self.channels.inverter_run
+                and self._inverter_channel != channel
             ):
                 self._close_do_inverter_task()
             if self._do_inverter_task is None:
-                from nidaqmx.constants import LineGrouping  # type: ignore
-
-                task = self._nidaqmx.Task()
-                task.do_channels.add_do_chan(
-                    self.channels.inverter_run,
-                    line_grouping=LineGrouping.CHAN_PER_LINE,
-                )
+                task = self._daq.create_task()
+                self._daq.create_do_lines(task, channel)
                 self._do_inverter_task = task
-                self._inverter_channel = self.channels.inverter_run
-            self._do_inverter_task.write([on], auto_start=True)
+                self._inverter_channel = channel
+            self._daq.write_digital_lines(self._do_inverter_task, [on])
             self._last_inverter = on
             return on
         except Exception as exc:  # noqa: BLE001
             self._close_do_inverter_task()
-            raise DaqError(f"인버터 RUN(DO4) 출력 오류: {exc}") from exc
+            raise DaqError(f"인버터 RUN 출력 오류: {exc}") from exc
 
-    def write_spare_do(self, on: bool) -> bool:
-        """Write the spare NI 9477 sinking output (default DO5)."""
+    def write_inverter_run2(self, on: bool) -> bool:
+        """Optional second FX DO. No-op when channel is empty."""
         on = bool(on)
-        if not (self.level_available and self._nidaqmx):
-            self._last_spare_do = on
+        channel = (self.channels.inverter_run2 or "").strip()
+        if not channel:
+            self._last_inverter2 = on
+            return on
+        if not (self.level_available and self._daq):
+            self._last_inverter2 = on
             return on
         try:
             if (
-                self._do_spare_task is not None
-                and self._spare_do_channel != self.channels.spare_do
+                self._do_inverter2_task is not None
+                and self._inverter2_channel != channel
             ):
-                self._close_do_spare_task()
-            if self._do_spare_task is None:
-                from nidaqmx.constants import LineGrouping  # type: ignore
-
-                task = self._nidaqmx.Task()
-                task.do_channels.add_do_chan(
-                    self.channels.spare_do,
-                    line_grouping=LineGrouping.CHAN_PER_LINE,
-                )
-                self._do_spare_task = task
-                self._spare_do_channel = self.channels.spare_do
-            self._do_spare_task.write([on], auto_start=True)
-            self._last_spare_do = on
+                self._close_do_inverter2_task()
+            if self._do_inverter2_task is None:
+                task = self._daq.create_task()
+                self._daq.create_do_lines(task, channel)
+                self._do_inverter2_task = task
+                self._inverter2_channel = channel
+            self._daq.write_digital_lines(self._do_inverter2_task, [on])
+            self._last_inverter2 = on
             return on
         except Exception as exc:  # noqa: BLE001
-            self._close_do_spare_task()
-            raise DaqError(f"DO 5 출력 오류: {exc}") from exc
+            self._close_do_inverter2_task()
+            raise DaqError(f"인버터 RUN2 출력 오류: {exc}") from exc
+
+    def write_spare_do4(self, on: bool) -> bool:
+        """Coolint P DO4 SINK: True=ON, False=OFF."""
+        on = bool(on)
+        if not (self.level_available and self._daq):
+            self._last_spare_do4 = on
+            return on
+        try:
+            if (
+                self._do_spare4_task is not None
+                and self._spare_do4_channel != self.channels.spare_do4
+            ):
+                self._close_do_spare4_task()
+            if self._do_spare4_task is None:
+                task = self._daq.create_task()
+                self._daq.create_do_lines(task, self.channels.spare_do4)
+                self._do_spare4_task = task
+                self._spare_do4_channel = self.channels.spare_do4
+            self._daq.write_digital_lines(self._do_spare4_task, [on])
+            self._last_spare_do4 = on
+            return on
+        except Exception as exc:  # noqa: BLE001
+            self._close_do_spare4_task()
+            raise DaqError(f"DO 4 출력 오류: {exc}") from exc
 
     def write_voltage(self, voltage: float, channel: str | None = None) -> float:
         voltage = max(0.0, min(5.0, float(voltage)))
         channel = channel or self.channels.ao_pump
-        if not (self.available and self._nidaqmx):
+        if not (self.available and self._daq):
             return voltage
         try:
             task = self._ao_tasks.get(channel)
             if task is None:
-                task = self._nidaqmx.Task()
-                task.ao_channels.add_ao_voltage_chan(channel, min_val=0.0, max_val=5.0)
+                task = self._daq.create_task()
+                self._daq.create_ao_voltage(task, channel)
                 self._ao_tasks[channel] = task
-            task.write(voltage, auto_start=True)
+            self._daq.write_ao_voltage(task, voltage)
             self.error = "연결됨"
         except Exception as exc:  # noqa: BLE001
             self.error = f"AO 출력 오류: {exc}"
@@ -379,89 +448,64 @@ class DaqService:
             raise DaqError(self.error) from exc
         return voltage
 
+    def _clear_handle(self, handle: object | None) -> None:
+        if handle is None or self._daq is None:
+            return
+        self._daq.clear_task(handle)  # type: ignore[arg-type]
+
     def _close_ao_task(self, channel: str | None = None) -> None:
         channels = [channel] if channel is not None else list(self._ao_tasks)
         for task_channel in channels:
             task = self._ao_tasks.pop(task_channel, None)
-            if task is None:
-                continue
-            try:
-                task.close()
-            except Exception:  # noqa: BLE001
-                pass
+            self._clear_handle(task)
 
     def _close_di_task(self) -> None:
         task = self._di_task
         self._di_task = None
         self._level_channel = None
-        if task is not None:
-            try:
-                task.close()
-            except Exception:  # noqa: BLE001
-                pass
-
-    def _close_di_flame_task(self) -> None:
-        task = self._di_flame_task
-        self._di_flame_task = None
-        self._flame_channel = None
-        if task is not None:
-            try:
-                task.close()
-            except Exception:  # noqa: BLE001
-                pass
+        self._clear_handle(task)
 
     def _close_do_task(self) -> None:
         task = self._do_task
         self._do_task = None
         self._valve_channel = None
-        if task is not None:
-            try:
-                task.close()
-            except Exception:  # noqa: BLE001
-                pass
+        self._clear_handle(task)
 
     def _close_do_igniter_task(self) -> None:
         task = self._do_igniter_task
         self._do_igniter_task = None
         self._igniter_channel = None
-        if task is not None:
-            try:
-                task.close()
-            except Exception:  # noqa: BLE001
-                pass
+        self._clear_handle(task)
 
     def _close_do_inverter_task(self) -> None:
         task = self._do_inverter_task
         self._do_inverter_task = None
         self._inverter_channel = None
-        if task is not None:
-            try:
-                task.close()
-            except Exception:  # noqa: BLE001
-                pass
+        self._clear_handle(task)
 
-    def _close_do_spare_task(self) -> None:
-        task = self._do_spare_task
-        self._do_spare_task = None
-        self._spare_do_channel = None
-        if task is not None:
-            try:
-                task.close()
-            except Exception:  # noqa: BLE001
-                pass
+    def _close_do_inverter2_task(self) -> None:
+        task = self._do_inverter2_task
+        self._do_inverter2_task = None
+        self._inverter2_channel = None
+        self._clear_handle(task)
 
-    def _close_tc_task(self) -> None:
+    def _close_do_spare4_task(self) -> None:
+        task = self._do_spare4_task
+        self._do_spare4_task = None
+        self._spare_do4_channel = None
+        self._clear_handle(task)
+
+    def _close_tc_task_unlocked(self) -> None:
         task = self._tc_task
         self._tc_task = None
         self._tc_channels = None
-        if task is not None:
-            try:
-                task.close()
-            except Exception:  # noqa: BLE001
-                pass
+        self._clear_handle(task)
+
+    def _close_tc_task(self) -> None:
+        with self._tc_lock:
+            self._close_tc_task_unlocked()
 
     def close_thermocouples(self) -> None:
-        """Release the optional NI 9214 task without affecting other I/O."""
         self._close_tc_task()
 
     def close(self) -> None:
@@ -478,7 +522,11 @@ class DaqService:
         except DaqError:
             pass
         try:
-            self.write_spare_do(False)
+            self.write_inverter_run2(False)
+        except DaqError:
+            pass
+        try:
+            self.write_spare_do4(False)
         except DaqError:
             pass
         try:
@@ -493,11 +541,15 @@ class DaqService:
             self.write_voltage(0.0, self.channels.spare_ao)
         except DaqError:
             pass
+        try:
+            self.write_voltage(0.0, self.channels.ao_pump2)
+        except DaqError:
+            pass
         self._close_di_task()
         self._close_do_task()
-        self._close_di_flame_task()
         self._close_do_igniter_task()
         self._close_do_inverter_task()
-        self._close_do_spare_task()
+        self._close_do_inverter2_task()
+        self._close_do_spare4_task()
         self._close_tc_task()
         self._close_ao_task()

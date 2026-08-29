@@ -12,19 +12,19 @@ PulseFlow Industrial PC Deploy Guide
 
 Industrial PC requirements
 --------------------------
-- Install NI-DAQmx Runtime
-- NI MAX device names:
-  cDAQ2
-  cDAQ2Mod1 (NI 9264)  REF.W=ao0 / NG PUMP=ao1
-  cDAQ2Mod2 (NI 9422)
-  cDAQ2Mod3 (NI 9477)
-- Confirm MP5Y USB-RS485 COM port (default COM3)
+- Install NI-DAQmx Runtime 64-bit (PulseFlow uses nicaiu.dll directly)
+- NI MAX must show cDAQ + NI 9264 / 9422 / 9477 modules
+- PulseFlow.exe must be built on a Windows PC with build_exe.bat
+- Prefer C:\PulseFlow (local disk) over OneDrive/Desktop for faster EXE start
+- Default MP5Y port is COM9 (change in Settings if needed)
+- Slim EXE: no Python nidaqmx/numpy bundled (smaller, faster start)
 
 Labels
 ------
 - AO0 = REF.W
 - AO1 = NG PUMP
-- I/O TEST = REF.W(AO0) + valve DO0~2 manual test
+- I/O TEST = AO2 (0~5V) + DO0~2 valve manual
+- Coolint P (DO4) = main UI ON/OFF
 - NG PUMP is controlled on the main UI
 
 GitHub source ZIP
