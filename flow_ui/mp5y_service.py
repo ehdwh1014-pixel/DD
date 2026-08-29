@@ -1,7 +1,7 @@
 """Autonics MP5Y-25 Modbus RTU reader (USB-RS485).
 
 Default link settings match Autonics factory defaults:
-  COM3, 9600 baud, 8N2, slave address 1
+  COM9, 9600 baud, 8N2, slave address 1
 
 Input registers (Func 04):
   0x03E9 / 0x03EA : PV (Autonics 2-word value, -19999..99999)
@@ -12,6 +12,7 @@ Input registers (Func 04):
 from __future__ import annotations
 
 import math
+import os
 import random
 import time
 from dataclasses import dataclass
@@ -45,13 +46,13 @@ MODE_NAMES = {
 
 @dataclass
 class Mp5yConfig:
-    port: str = "COM3"
+    port: str = "COM9"
     slave_id: int = 1
     baudrate: int = 9600
     parity: str = "N"
     stopbits: int = 2
     bytesize: int = 8
-    timeout_s: float = 0.5
+    timeout_s: float = 1.0
     # "frequency_hz": MP5Y shows Hz, convert with pulse_ml * 60
     # "flow_ccpm": MP5Y already shows cc/min (prescale 27.6 = 0.46*60)
     value_mode: str = "flow_ccpm"
@@ -82,7 +83,25 @@ class Mp5yService:
         self._last_dot = 0
         self._sim_started = time.monotonic()
 
+    def _simulation_enabled(self) -> bool:
+        return os.environ.get("PULSEFLOW_SIM", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+
     def check_connection(self) -> bool:
+        if self._simulation_enabled():
+            flow, hz, raw, dot = self._simulate()
+            self._last_flow, self._last_hz = flow, hz
+            self._last_raw, self._last_dot = raw, dot
+            self.available = True
+            self.error = "시뮬레이션 모드"
+            self.device_summary = (
+                f"MP5Y-25 시뮬레이션 {self.config.port} addr={self.config.slave_id}"
+            )
+            return True
         try:
             self._ensure_client()
             flow, hz, raw, dot = self._read_pv_once()
@@ -105,6 +124,8 @@ class Mp5yService:
 
     def port_present(self) -> bool:
         """Return whether the configured serial port is enumerated by Windows."""
+        if self._simulation_enabled():
+            return True
         try:
             from serial.tools import list_ports
 
@@ -120,6 +141,8 @@ class Mp5yService:
         """Return (flow_ccpm, frequency_hz_or_nan, raw_int, dot)."""
         if pulse_ml is not None:
             self.config.pulse_ml = pulse_ml
+        if self._simulation_enabled():
+            return self._simulate()
 
         try:
             flow, hz, raw, dot = self._read_pv_once()
@@ -145,21 +168,24 @@ class Mp5yService:
     def _ensure_client(self) -> None:
         if self._client is not None:
             return
-        try:
-            from pymodbus.client import ModbusSerialClient
-        except ImportError as exc:
-            raise Mp5yError("pymodbus / pyserial 패키지가 필요합니다.") from exc
+        from flow_ui.modbus_rtu import ModbusRtuClient, ModbusRtuError
 
-        client = ModbusSerialClient(
-            port=self.config.port,
+        client = ModbusRtuClient(
+            self.config.port,
             baudrate=self.config.baudrate,
             parity=self.config.parity,
             stopbits=self.config.stopbits,
             bytesize=self.config.bytesize,
-            timeout=self.config.timeout_s,
+            timeout_s=self.config.timeout_s,
         )
-        if not client.connect():
-            raise Mp5yError(f"{self.config.port} 연결 실패")
+        try:
+            client.connect()
+        except ModbusRtuError as exc:
+            client.close()
+            raise Mp5yError(str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001
+            client.close()
+            raise Mp5yError(f"{self.config.port} 연결 실패: {exc}") from exc
         self._client = client
 
     def _close_client(self) -> None:
@@ -173,22 +199,39 @@ class Mp5yService:
             pass
 
     def _read_pv_once(self) -> tuple[float, float, int, int]:
+        from flow_ui.modbus_rtu import ModbusRtuError
+
         self._ensure_client()
         assert self._client is not None
-        # Read PV..MODE so we can show the operation mode (F1 recommended).
-        result = self._client.read_input_registers(
-            address=self.config.pv_address,
-            count=5,
-            device_id=self.config.slave_id,
-        )
-        if result is None or result.isError():
-            raise Mp5yError(f"Modbus 응답 오류: {result}")
+        # Prefer PV+DOT+UNIT+MODE (5 regs). Fall back to PV+DOT if meter rejects.
+        last_error: Exception | None = None
+        regs: list[int] | None = None
+        for count in (5, 3):
+            try:
+                regs = self._client.read_input_registers(
+                    self.config.slave_id, self.config.pv_address, count
+                )
+                if len(regs) < 3:
+                    last_error = Mp5yError(f"레지스터 부족: {regs}")
+                    regs = None
+                    continue
+                break
+            except (ModbusRtuError, Mp5yError) as exc:
+                last_error = exc
+                regs = None
+                # Re-open port once; some adapters drop the first frame after connect.
+                self._close_client()
+                self._ensure_client()
+            except Exception as exc:  # noqa: BLE001
+                last_error = exc
+                regs = None
+                self._close_client()
+                self._ensure_client()
+        if regs is None:
+            raise Mp5yError(str(last_error) if last_error else "Modbus 응답 없음")
 
-        regs = list(result.registers)
-        if len(regs) < 5:
-            raise Mp5yError(f"레지스터 부족: {regs}")
-
-        word0, word1, dot_reg, _unit, mode_reg = regs[:5]
+        word0, word1, dot_reg = regs[0], regs[1], regs[2]
+        mode_reg = regs[4] if len(regs) >= 5 else 0
         self.last_regs = (word0, word1, dot_reg)
         self.last_mode = int(mode_reg) & 0xFF
 
