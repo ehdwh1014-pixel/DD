@@ -971,212 +971,231 @@ class FlowControlApp(tk.Tk):
         return section
 
     def _create_desktop_feedback_page(self) -> ttk.Frame:
-        """7″ dashboard: inputs | PV/SV | mini graphs | FD/IGN — valves in thirds."""
+        """Desktop dashboard: settings | pump1 | pump2 | trends/status, valves below."""
         page = ttk.Frame(self.content, style="App.TFrame")
-        page.columnconfigure(0, weight=1, uniform="top")
-        page.columnconfigure(1, weight=1, uniform="top")
-        page.columnconfigure(2, weight=1, uniform="top")
-        page.columnconfigure(3, weight=1, uniform="top")
-        page.rowconfigure(0, weight=0)
-        page.rowconfigure(1, weight=1)
+        page.columnconfigure(0, weight=18, uniform="dash")
+        page.columnconfigure(1, weight=27, uniform="dash")
+        page.columnconfigure(2, weight=27, uniform="dash")
+        page.columnconfigure(3, weight=28, uniform="dash")
+        page.rowconfigure(0, weight=3)
+        page.rowconfigure(1, weight=2)
 
-        # --- 1/4 펌프 입력 ---
+        # --- Col 0: PI tuning + run control + NG pump ---
         controls = self.panel(page)
-        controls.configure(padding=6)
+        controls.configure(padding=8)
         self.place_panel(controls, row=0, column=0, sticky="nsew", padx=(0, 4))
-        ttk.Label(controls, text="펌프 제어", style="PanelTitle.TLabel").grid(
-            row=0, column=0, columnspan=2, sticky="w", pady=(0, 2)
+        controls.columnconfigure(1, weight=1)
+        ttk.Label(controls, text="펌프 설정", style="PanelTitle.TLabel").grid(
+            row=0, column=0, columnspan=2, sticky="w", pady=(0, 4)
         )
-        self.fb_pulse_ml = self.field(controls, 1, "펄스정수 (ml/P)", "0.46")
+        self.fb_pulse_ml = self.field(controls, 1, "펄스정수", "0.46")
         self.p_gain = self.field(controls, 3, "P Gain", "0.020")
         self.i_gain = self.field(controls, 5, "I Gain", "0.005")
-        self.lpf_cutoff = self.field(controls, 7, "LPF (Hz)", "0.8", "0 = OFF")
+        self.lpf_cutoff = self.field(controls, 7, "LPF (Hz)", "0.8", "0=OFF")
         ttk.Button(controls, text="저장", command=self.save_settings).grid(
-            row=9, column=0, columnspan=2, sticky="ew", pady=(8, 0)
+            row=9, column=0, columnspan=2, sticky="ew", pady=(6, 0)
         )
+
         ttk.Separator(controls, orient="horizontal").grid(
-            row=10, column=0, columnspan=2, sticky="ew", pady=(10, 6)
+            row=10, column=0, columnspan=2, sticky="ew", pady=(10, 8)
         )
-        ttk.Label(controls, text="NG PUMP (AO1)", style="PanelTitle.TLabel").grid(
-            row=11, column=0, columnspan=2, sticky="w"
+        self.feedback_button = ttk.Button(
+            controls, text="제어 시작", style="Start.TButton", command=self.toggle_feedback
         )
-        ng_entry = ttk.Entry(
-            controls,
-            textvariable=self.ng_ao_voltage,
-            style="Highlight.TEntry",
-            justify="center",
-            width=10,
-        )
-        ng_entry.grid(row=12, column=0, columnspan=2, sticky="ew", pady=(4, 0))
-        ttk.Label(controls, text="0.000 ~ 5.000 V", style="Hint.TLabel").grid(
-            row=13, column=0, columnspan=2, sticky="w", pady=(2, 4)
-        )
-        ttk.Button(
-            controls, text="출력", style="Start.TButton", command=self.apply_ng_ao
-        ).grid(row=14, column=0, sticky="ew", pady=(0, 0))
-        ttk.Button(
-            controls, text="0 V", style="Stop.TButton", command=self.zero_ng_ao
-        ).grid(row=14, column=1, sticky="ew", padx=(6, 0))
-        self.ng_ao_value = ttk.Label(
-            controls, text="NG PUMP: 0.000 V", style="ValueSmall.TLabel"
-        )
-        self.ng_ao_value.grid(row=15, column=0, columnspan=2, sticky="w", pady=(6, 0))
-
-        # --- 2/4 PV / SV ---
-        focus = self.panel(page)
-        focus.configure(padding=6)
-        self.place_panel(focus, row=0, column=1, sticky="nsew", padx=(0, 4))
-        ttk.Label(focus, text="CURRENT FLOW", style="PanelTitle.TLabel").pack(anchor="w")
-        ttk.Label(focus, text="펌프1", style="Panel.TLabel").pack(anchor="w", pady=(6, 0))
-        self.focus_pv = ttk.Label(focus, text="PV  0.0 cc/min", style="ValueCompact.TLabel")
-        self.focus_pv.pack(anchor="w", pady=(4, 0))
-        self.pv_value = self.focus_pv
-        ttk.Label(focus, text="SV (cc/min)", style="Panel.TLabel").pack(anchor="w", pady=(6, 0))
-        self.sv_entry = ttk.Entry(
-            focus,
-            textvariable=self.sv_input,
-            style="Highlight.TEntry",
-            justify="center",
-            width=8,
-        )
-        self.sv_entry.pack(anchor="w", pady=(2, 0))
-        self.sv_entry.bind("<Return>", self._apply_sv_from_entry)
-        self.sv_entry.bind("<KP_Enter>", self._apply_sv_from_entry)
-        self.sv_apply_hint = ttk.Label(
-            focus, text="값 입력 후 Enter 적용", style="Hint.TLabel"
-        )
-        self.sv_apply_hint.pack(anchor="w", pady=(2, 0))
-        self.focus_err = ttk.Label(focus, text="오차: 0.0 cc/min", style="ValueSmall.TLabel")
-        self.focus_err.pack(anchor="w", pady=(2, 0))
-        self.fb_hz = ttk.Label(focus, text="MP5Y: 대기", style="Hint.TLabel")
-        self.fb_hz.pack(anchor="w", pady=(2, 0))
-        self.output_value = ttk.Label(focus, text="AO0: 0.000 V", style="ValueSmall.TLabel")
-        self.output_value.pack(anchor="w", pady=(2, 0))
-
-        ttk.Label(focus, text="펌프2", style="Panel.TLabel").pack(anchor="w", pady=(8, 0))
-        self.focus_pv2 = ttk.Label(focus, text="PV  0.0 cc/min", style="ValueCompact.TLabel")
-        self.focus_pv2.pack(anchor="w", pady=(4, 0))
-        ttk.Label(focus, text="SV (cc/min)", style="Panel.TLabel").pack(anchor="w", pady=(6, 0))
-        self.sv2_entry = ttk.Entry(
-            focus,
-            textvariable=self.sv2,
-            style="Highlight.TEntry",
-            justify="center",
-            width=8,
-        )
-        self.sv2_entry.pack(anchor="w", pady=(2, 0))
-        self.focus_err2 = ttk.Label(focus, text="오차: 0.0 cc/min", style="ValueSmall.TLabel")
-        self.focus_err2.pack(anchor="w", pady=(2, 0))
-        self.fb_hz2 = ttk.Label(focus, text="MP5Y2: 미연결", style="Hint.TLabel")
-        self.fb_hz2.pack(anchor="w", pady=(2, 0))
-        self.output_value2 = ttk.Label(
-            focus, text="AO2: 0.000 V", style="ValueSmall.TLabel"
-        )
-        self.output_value2.pack(anchor="w", pady=(2, 0))
+        self.feedback_button.grid(row=11, column=0, columnspan=2, sticky="ew")
         self.control_start_label = ttk.Label(
-            focus, text="제어 시작  --:--:--", style="ValueSmall.TLabel"
+            controls, text="제어 시작  --:--:--", style="Hint.TLabel"
         )
-        self.control_start_label.pack(anchor="w", pady=(8, 0))
-        injection_row = ttk.Frame(focus, style="Panel.TFrame")
-        injection_row.pack(fill="x", pady=(4, 0))
+        self.control_start_label.grid(row=12, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        injection_row = ttk.Frame(controls, style="Panel.TFrame")
+        injection_row.grid(row=13, column=0, columnspan=2, sticky="ew", pady=(2, 0))
         self.injection_time_label = ttk.Label(
-            injection_row, text="물 주입시간  00:00:00", style="ValueSmall.TLabel"
+            injection_row, text="주입 00:00:00", style="Hint.TLabel"
         )
         self.injection_time_label.pack(side="left")
         ttk.Button(
             injection_row, text="초기화", command=self.reset_injection_time
         ).pack(side="right")
-        self.feedback_button = ttk.Button(
-            focus, text="제어 시작", style="Start.TButton", command=self.toggle_feedback
-        )
-        self.feedback_button.pack(fill="x", pady=(8, 0))
 
-        # --- 3/4 미니 그래프 (보기 전용, 작게) ---
-        graphs = self.panel(page)
-        graphs.configure(padding=4)
-        self.place_panel(graphs, row=0, column=2, sticky="nsew", padx=(0, 4))
-        ttk.Label(graphs, text="추이", style="PanelTitle.TLabel").pack(anchor="w")
+        ttk.Separator(controls, orient="horizontal").grid(
+            row=14, column=0, columnspan=2, sticky="ew", pady=(10, 6)
+        )
+        ttk.Label(controls, text="NG PUMP (AO1)", style="PanelTitle.TLabel").grid(
+            row=15, column=0, columnspan=2, sticky="w"
+        )
+        ng_row = ttk.Frame(controls, style="Panel.TFrame")
+        ng_row.grid(row=16, column=0, columnspan=2, sticky="ew", pady=(4, 0))
+        ng_row.columnconfigure(0, weight=1)
+        ttk.Entry(
+            ng_row,
+            textvariable=self.ng_ao_voltage,
+            style="Highlight.TEntry",
+            justify="center",
+            width=8,
+        ).grid(row=0, column=0, sticky="ew")
+        ng_btns = ttk.Frame(ng_row, style="Panel.TFrame")
+        ng_btns.grid(row=0, column=1, padx=(6, 0))
+        ttk.Button(ng_btns, text="출력", style="Start.TButton", command=self.apply_ng_ao).pack(
+            side="left", padx=(0, 3)
+        )
+        ttk.Button(ng_btns, text="0V", style="Stop.TButton", command=self.zero_ng_ao).pack(
+            side="left"
+        )
+        self.ng_ao_value = ttk.Label(
+            controls, text="NG: 0.000 V", style="ValueSmall.TLabel"
+        )
+        self.ng_ao_value.grid(row=17, column=0, columnspan=2, sticky="w", pady=(4, 0))
+
+        # --- Col 1: Pump 1 ---
+        pump1 = self.panel(page)
+        pump1.configure(padding=8)
+        self.place_panel(pump1, row=0, column=1, sticky="nsew", padx=(0, 4))
+        ttk.Label(pump1, text="펌프1 · AO0", style="PanelTitle.TLabel").pack(anchor="w")
+        self.focus_pv = ttk.Label(pump1, text="0.0", style="Value.TLabel")
+        self.focus_pv.pack(anchor="w", pady=(2, 0))
+        self.pv_value = self.focus_pv
+        ttk.Label(pump1, text="cc/min", style="Hint.TLabel").pack(anchor="w")
+        sv_row1 = ttk.Frame(pump1, style="Panel.TFrame")
+        sv_row1.pack(fill="x", pady=(8, 0))
+        ttk.Label(sv_row1, text="SV", style="Panel.TLabel").pack(side="left")
+        self.sv_entry = ttk.Entry(
+            sv_row1,
+            textvariable=self.sv_input,
+            style="Highlight.TEntry",
+            justify="center",
+            width=9,
+        )
+        self.sv_entry.pack(side="right")
+        self.sv_entry.bind("<Return>", self._apply_sv_from_entry)
+        self.sv_entry.bind("<KP_Enter>", self._apply_sv_from_entry)
+        self.sv_apply_hint = ttk.Label(
+            pump1, text="Enter로 적용", style="Hint.TLabel"
+        )
+        self.sv_apply_hint.pack(anchor="e", pady=(2, 0))
+        stat1 = ttk.Frame(pump1, style="Panel.TFrame")
+        stat1.pack(fill="x", pady=(6, 0))
+        self.focus_err = ttk.Label(stat1, text="Δ 0.0", style="ValueSmall.TLabel")
+        self.focus_err.pack(side="left")
+        self.fb_hz = ttk.Label(stat1, text="MP5Y 대기", style="Hint.TLabel")
+        self.fb_hz.pack(side="right")
+        self.output_value = ttk.Label(pump1, text="AO0  0.000 V", style="ValueSmall.TLabel")
+        self.output_value.pack(anchor="w", pady=(6, 0))
+
+        # --- Col 2: Pump 2 ---
+        pump2 = self.panel(page)
+        pump2.configure(padding=8)
+        self.place_panel(pump2, row=0, column=2, sticky="nsew", padx=(0, 4))
+        ttk.Label(pump2, text="펌프2 · AO2", style="PanelTitle.TLabel").pack(anchor="w")
+        self.focus_pv2 = ttk.Label(pump2, text="0.0", style="Value.TLabel")
+        self.focus_pv2.pack(anchor="w", pady=(2, 0))
+        sv_row2 = ttk.Frame(pump2, style="Panel.TFrame")
+        sv_row2.pack(fill="x", pady=(8, 0))
+        ttk.Label(sv_row2, text="SV", style="Panel.TLabel").pack(side="left")
+        self.sv2_entry = ttk.Entry(
+            sv_row2,
+            textvariable=self.sv2,
+            style="Highlight.TEntry",
+            justify="center",
+            width=9,
+        )
+        self.sv2_entry.pack(side="right")
+        ttk.Label(pump2, text="cc/min", style="Hint.TLabel").pack(anchor="e")
+        stat2 = ttk.Frame(pump2, style="Panel.TFrame")
+        stat2.pack(fill="x", pady=(6, 0))
+        self.focus_err2 = ttk.Label(stat2, text="Δ 0.0", style="ValueSmall.TLabel")
+        self.focus_err2.pack(side="left")
+        self.fb_hz2 = ttk.Label(stat2, text="MP5Y2 —", style="Hint.TLabel")
+        self.fb_hz2.pack(side="right")
+        self.output_value2 = ttk.Label(
+            pump2, text="AO2  0.000 V", style="ValueSmall.TLabel"
+        )
+        self.output_value2.pack(anchor="w", pady=(6, 0))
+
+        # --- Col 3: Graphs + comm + IGN/Coolint ---
+        monitor = self.panel(page)
+        monitor.configure(padding=6)
+        self.place_panel(monitor, row=0, column=3, sticky="nsew")
+        ttk.Label(monitor, text="추이 / 상태", style="PanelTitle.TLabel").pack(anchor="w")
         self.feedback_graph = TrendGraph(
-            graphs,
+            monitor,
             "PV / SV",
             [("PV", COLORS["pv"]), ("SV", COLORS["sv"])],
             0,
             200,
             "cc/min",
         )
-        self.feedback_graph.configure(width=200, height=100)
-        self.feedback_graph.pack(fill="x", pady=(6, 6))
+        self.feedback_graph.configure(width=220, height=108)
+        self.feedback_graph.pack(fill="x", pady=(4, 4))
         self.feedback_ao_graph = TrendGraph(
-            graphs, "REF.W (V)", [("REF.W", COLORS["ao"])], 0, 5, "V"
+            monitor, "AO (V)", [("AO0", COLORS["ao"])], 0, 5, "V"
         )
-        self.feedback_ao_graph.configure(width=200, height=80)
+        self.feedback_ao_graph.configure(width=220, height=72)
         self.feedback_ao_graph.pack(fill="x")
 
-        # --- 4/4 펄스미터 통신 + IGN / Coolint P ---
-        safety = self.panel(page)
-        safety.configure(padding=6)
-        self.place_panel(safety, row=0, column=3, sticky="nsew")
-        ttk.Label(safety, text="통신 / 점화", style="PanelTitle.TLabel").pack(anchor="w")
+        ttk.Separator(monitor, orient="horizontal").pack(fill="x", pady=(6, 6))
+        comm_row = ttk.Frame(monitor, style="Panel.TFrame")
+        comm_row.pack(fill="x")
+        comm_row.columnconfigure((0, 1), weight=1)
 
-        pulse_row = ttk.Frame(safety, style="Panel.TFrame")
-        pulse_row.pack(anchor="w", pady=(10, 0))
+        mp1_comm = ttk.Frame(comm_row, style="Panel.TFrame")
+        mp1_comm.grid(row=0, column=0, sticky="w")
         self.mp5y_canvas = tk.Canvas(
-            pulse_row, width=28, height=28, bg=COLORS["panel"], highlightthickness=0
+            mp1_comm, width=22, height=22, bg=COLORS["panel"], highlightthickness=0
         )
         self.mp5y_canvas.pack(side="left")
         self.mp5y_lamp = self.mp5y_canvas.create_oval(
-            3, 3, 25, 25, fill=COLORS["bad"], outline="#9B2C2C", width=2
+            2, 2, 20, 20, fill=COLORS["bad"], outline="#9B2C2C", width=2
         )
-        mp5y_text = ttk.Frame(pulse_row, style="Panel.TFrame")
-        mp5y_text.pack(side="left", padx=(8, 0))
-        ttk.Label(mp5y_text, text="펄스미터", style="Panel.TLabel").pack(anchor="w")
-        self.mp5y_status_label = ttk.Label(mp5y_text, text="통신 OFF", style="Hint.TLabel")
+        mp5y_text = ttk.Frame(mp1_comm, style="Panel.TFrame")
+        mp5y_text.pack(side="left", padx=(4, 0))
+        ttk.Label(mp5y_text, text="MP5Y", style="Panel.TLabel").pack(anchor="w")
+        self.mp5y_status_label = ttk.Label(
+            mp5y_text, text="COM3", style="Hint.TLabel"
+        )
         self.mp5y_status_label.pack(anchor="w")
 
-        pulse_row2 = ttk.Frame(safety, style="Panel.TFrame")
-        pulse_row2.pack(anchor="w", pady=(8, 0))
+        mp2_comm = ttk.Frame(comm_row, style="Panel.TFrame")
+        mp2_comm.grid(row=0, column=1, sticky="e")
         self.mp5y2_canvas = tk.Canvas(
-            pulse_row2, width=28, height=28, bg=COLORS["panel"], highlightthickness=0
+            mp2_comm, width=22, height=22, bg=COLORS["panel"], highlightthickness=0
         )
         self.mp5y2_canvas.pack(side="left")
         self.mp5y2_lamp = self.mp5y2_canvas.create_oval(
-            3, 3, 25, 25, fill=COLORS["bad"], outline="#9B2C2C", width=2
+            2, 2, 20, 20, fill=COLORS["bad"], outline="#9B2C2C", width=2
         )
-        mp5y2_text = ttk.Frame(pulse_row2, style="Panel.TFrame")
-        mp5y2_text.pack(side="left", padx=(8, 0))
-        ttk.Label(mp5y2_text, text="펄스미터", style="Panel.TLabel").pack(anchor="w")
+        mp5y2_text = ttk.Frame(mp2_comm, style="Panel.TFrame")
+        mp5y2_text.pack(side="left", padx=(4, 0))
+        ttk.Label(mp5y2_text, text="MP5Y2", style="Panel.TLabel").pack(anchor="w")
         self.mp5y2_status_label = ttk.Label(
-            mp5y2_text, text="통신 OFF", style="Hint.TLabel"
+            mp5y2_text, text="COM4", style="Hint.TLabel"
         )
         self.mp5y2_status_label.pack(anchor="w")
 
-        ttk.Separator(safety, orient="horizontal").pack(fill="x", pady=(12, 10))
-
+        aux_row = ttk.Frame(monitor, style="Panel.TFrame")
+        aux_row.pack(fill="x", pady=(8, 0))
+        aux_row.columnconfigure((0, 1), weight=1)
         self.igniter_button = ttk.Button(
-            safety,
+            aux_row,
             text="IGN OFF",
             style="Start.TButton",
             command=self.toggle_igniter,
         )
-        self.igniter_button.pack(fill="x", pady=(0, 0))
+        self.igniter_button.grid(row=0, column=0, sticky="ew", padx=(0, 3))
         self.igniter_caption = self.igniter_button
-        ttk.Label(safety, text="점화기", style="Hint.TLabel").pack(anchor="w", pady=(2, 0))
-
         self.coolint_p_button = ttk.Button(
-            safety,
+            aux_row,
             text="Coolint P OFF",
             style="Stop.TButton",
             command=self.toggle_coolint_p,
         )
-        self.coolint_p_button.pack(fill="x", pady=(12, 0))
-        ttk.Label(safety, text="Coolint P · DO4", style="Hint.TLabel").pack(
-            anchor="w", pady=(2, 0)
-        )
+        self.coolint_p_button.grid(row=0, column=1, sticky="ew", padx=(3, 0))
 
-        # --- 하단: V1 / V2 / V3 삼등분 ---
+        # --- Bottom: level / valves (compact) ---
         level_section = self.panel(page)
         level_section.configure(padding=6)
-        self.place_panel(level_section, row=1, column=0, columnspan=4, sticky="nsew", pady=(6, 0))
+        self.place_panel(
+            level_section, row=1, column=0, columnspan=4, sticky="nsew", pady=(4, 0)
+        )
         header = ttk.Frame(level_section, style="Panel.TFrame")
         header.pack(fill="x")
         ttk.Label(header, text="레벨 / 밸브", style="PanelTitle.TLabel").pack(side="left")
@@ -1186,7 +1205,7 @@ class FlowControlApp(tk.Tk):
         self.level_master_status.pack(side="right")
 
         cards = ttk.Frame(level_section, style="Panel.TFrame")
-        cards.pack(fill="both", expand=True, pady=(6, 0))
+        cards.pack(fill="both", expand=True, pady=(4, 0))
         for i in range(3):
             cards.columnconfigure(i, weight=1, uniform="valve")
             cards.rowconfigure(0, weight=1)
@@ -1207,38 +1226,34 @@ class FlowControlApp(tk.Tk):
                 row=0,
                 column=index,
                 sticky="nsew",
-                padx=(0 if index == 0 else 6, 0),
+                padx=(0 if index == 0 else 4, 0),
             )
-            card = ttk.Frame(wrap, style="Panel.TFrame", padding=10)
+            card = ttk.Frame(wrap, style="Panel.TFrame", padding=6)
             card.pack(fill="both", expand=True)
             head = ttk.Frame(card, style="Panel.TFrame")
             head.pack(fill="x")
-            do_label = ttk.Label(
-                head, text=f"DO{index}", style="PanelTitle.TLabel"
-            )
+            do_label = ttk.Label(head, text=f"DO{index}", style="PanelTitle.TLabel")
             do_label.pack(side="left")
             self.valve_do_labels.append(do_label)
             valve = ttk.Label(head, text="닫힘", style="ValueSmall.TLabel")
             valve.pack(side="right")
             name_entry = ttk.Entry(
-                card, textvariable=self.valve_name_vars[index], width=14
+                card, textvariable=self.valve_name_vars[index], width=12
             )
-            name_entry.pack(fill="x", pady=(6, 0))
+            name_entry.pack(fill="x", pady=(4, 0))
             name_entry.bind(
                 "<Return>",
                 lambda _event, i=index: self._commit_valve_name(i),
             )
-            ttk.Label(card, text=rule, style="Hint.TLabel").pack(
-                anchor="w", pady=(4, 0)
-            )
+            ttk.Label(card, text=rule, style="Hint.TLabel").pack(anchor="w", pady=(2, 0))
             sensor_row = ttk.Frame(card, style="Panel.TFrame")
-            sensor_row.pack(fill="x", pady=(10, 0))
-            high = ttk.Label(sensor_row, text="● HIGH OFF", style="Hint.TLabel")
+            sensor_row.pack(fill="x", pady=(6, 0))
+            high = ttk.Label(sensor_row, text="H OFF", style="Hint.TLabel")
             high.pack(side="left")
-            low = ttk.Label(sensor_row, text="● LOW OFF", style="Hint.TLabel")
+            low = ttk.Label(sensor_row, text="L OFF", style="Hint.TLabel")
             low.pack(side="right")
             logic = ttk.Label(card, text="대기", style="Hint.TLabel")
-            logic.pack(anchor="w", pady=(10, 0))
+            logic.pack(anchor="w", pady=(4, 0))
             self.level_high_labels.append(high)
             self.level_low_labels.append(low)
             self.valve_status_labels.append(valve)
@@ -2210,9 +2225,11 @@ class FlowControlApp(tk.Tk):
 
     def _refresh_ng_ao_label(self) -> None:
         if getattr(self, "ng_ao_value", None) is not None:
-            self.ng_ao_value.configure(
-                text=f"NG PUMP: {self.current_ng_ao:.3f} V"
-            )
+            if self.touch_mode:
+                text = f"NG PUMP: {self.current_ng_ao:.3f} V"
+            else:
+                text = f"NG: {self.current_ng_ao:.3f} V"
+            self.ng_ao_value.configure(text=text)
 
     def validate_feedback(self) -> bool:
         for var, label in (
@@ -2696,9 +2713,12 @@ class FlowControlApp(tk.Tk):
         hours, remainder = divmod(total_seconds, 3600)
         minutes, seconds = divmod(remainder, 60)
         if getattr(self, "injection_time_label", None) is not None:
-            self.injection_time_label.configure(
-                text=f"물 주입시간  {hours:02d}:{minutes:02d}:{seconds:02d}"
-            )
+            clock = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+            if self.touch_mode:
+                text = f"물 주입시간  {clock}"
+            else:
+                text = f"주입 {clock}"
+            self.injection_time_label.configure(text=text)
 
     def _tick_process_clock(self) -> None:
         """Refresh wall clock display."""
@@ -2713,11 +2733,19 @@ class FlowControlApp(tk.Tk):
             low = values[index * 2 + 1]
             opened = self.valve_commands[index]
             self.level_high_labels[index].configure(
-                text=f"● HIGH  {'ON' if high else 'OFF'}",
+                text=(
+                    f"● HIGH  {'ON' if high else 'OFF'}"
+                    if self.touch_mode
+                    else f"H {'ON' if high else 'OFF'}"
+                ),
                 foreground=COLORS["bad"] if high else COLORS["muted"],
             )
             self.level_low_labels[index].configure(
-                text=f"● LOW   {'ON' if low else 'OFF'}",
+                text=(
+                    f"● LOW   {'ON' if low else 'OFF'}"
+                    if self.touch_mode
+                    else f"L {'ON' if low else 'OFF'}"
+                ),
                 foreground=COLORS["warn"] if low else COLORS["muted"],
             )
             self.valve_status_labels[index].configure(
@@ -2807,25 +2835,41 @@ class FlowControlApp(tk.Tk):
             self.focus_sv.configure(text=f"SV  {sv:.1f}")
             if hasattr(self, "focus_sv2"):
                 self.focus_sv2.configure(text=f"SV  {sv2:.1f}")
+            self.focus_err.configure(text=f"오차: {sv - pv:+.1f} cc/min")
+            if hasattr(self, "focus_err2"):
+                self.focus_err2.configure(text=f"오차: {sv2 - pv2:+.1f} cc/min")
+            if self.mp5y_config.value_mode == "flow_ccpm":
+                self.fb_hz.configure(text=f"MP5Y 표시: {raw_flow:.2f} cc/min")
+            else:
+                self.fb_hz.configure(text=f"MP5Y 표시: {hz_text} Hz")
+            if not self._mp5y2_port_present:
+                self.fb_hz2.configure(text="MP5Y2: 미연결")
+            elif self.mp5y2_config.value_mode == "flow_ccpm":
+                self.fb_hz2.configure(text=f"MP5Y2 표시: {raw_flow2:.2f} cc/min")
+            else:
+                self.fb_hz2.configure(text=f"MP5Y2 표시: {hz2_text} Hz")
+            self.output_value.configure(text=f"AO0: {self.current_ao:.3f} V")
+            if hasattr(self, "output_value2"):
+                self.output_value2.configure(text=f"AO2: {self.current_ao2:.3f} V")
         else:
-            self.focus_pv.configure(text=f"PV  {pv:.1f} cc/min")
-            self.focus_pv2.configure(text=f"PV  {pv2:.1f} cc/min")
-        self.focus_err.configure(text=f"오차: {sv - pv:+.1f} cc/min")
-        if hasattr(self, "focus_err2"):
-            self.focus_err2.configure(text=f"오차: {sv2 - pv2:+.1f} cc/min")
-        if self.mp5y_config.value_mode == "flow_ccpm":
-            self.fb_hz.configure(text=f"MP5Y 표시: {raw_flow:.2f} cc/min")
-        else:
-            self.fb_hz.configure(text=f"MP5Y 표시: {hz_text} Hz")
-        if not self._mp5y2_port_present:
-            self.fb_hz2.configure(text="MP5Y2: 미연결")
-        elif self.mp5y2_config.value_mode == "flow_ccpm":
-            self.fb_hz2.configure(text=f"MP5Y2 표시: {raw_flow2:.2f} cc/min")
-        else:
-            self.fb_hz2.configure(text=f"MP5Y2 표시: {hz2_text} Hz")
-        self.output_value.configure(text=f"AO0: {self.current_ao:.3f} V")
-        if hasattr(self, "output_value2"):
-            self.output_value2.configure(text=f"AO2: {self.current_ao2:.3f} V")
+            self.focus_pv.configure(text=f"{pv:.1f}")
+            self.focus_pv2.configure(text=f"{pv2:.1f}")
+            self.focus_err.configure(text=f"Δ {sv - pv:+.1f}")
+            if hasattr(self, "focus_err2"):
+                self.focus_err2.configure(text=f"Δ {sv2 - pv2:+.1f}")
+            if self.mp5y_config.value_mode == "flow_ccpm":
+                self.fb_hz.configure(text=f"{raw_flow:.1f} cc/min")
+            else:
+                self.fb_hz.configure(text=f"{hz_text} Hz")
+            if not self._mp5y2_port_present:
+                self.fb_hz2.configure(text="미연결")
+            elif self.mp5y2_config.value_mode == "flow_ccpm":
+                self.fb_hz2.configure(text=f"{raw_flow2:.1f} cc/min")
+            else:
+                self.fb_hz2.configure(text=f"{hz2_text} Hz")
+            self.output_value.configure(text=f"AO0  {self.current_ao:.3f} V")
+            if hasattr(self, "output_value2"):
+                self.output_value2.configure(text=f"AO2  {self.current_ao2:.3f} V")
         self.feedback_graph.set_scale(
             0, max(200.0, max(sv, sv2) * 1.5), "cc/min"
         )
