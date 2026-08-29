@@ -172,6 +172,7 @@ class FlowControlApp(tk.Tk):
     GRAPH_MS = 500  # full graph redraw interval
     REDISCOVER_MS = 5000  # NI device rediscovery
     TC_POLL_S = 5.0  # thermocouple read interval
+    DESKTOP_PUMP_GRAPH_MIN = 104  # equal min height for PV and AO graph rows
 
     @staticmethod
     def _bundle_dir() -> Path:
@@ -989,6 +990,85 @@ class FlowControlApp(tk.Tk):
         self.coolint_p_button.pack(anchor="w", pady=(14, 0))
         return section
 
+    def _build_desktop_pump_graph_area(
+        self,
+        parent: ttk.Frame,
+        pv_title: str,
+        ao_title: str,
+        ao_legend: str,
+    ) -> tuple[TrendGraph, TrendGraph]:
+        """Stack PV/SV and AO graphs with equal height in the pump column."""
+        graph_area = ttk.Frame(parent, style="Panel.TFrame")
+        graph_area.pack(fill="both", expand=True)
+        graph_area.columnconfigure(0, weight=1)
+        graph_area.rowconfigure(0, weight=1, uniform="pump_graph")
+        graph_area.rowconfigure(1, weight=1, uniform="pump_graph")
+
+        pv_graph = TrendGraph(
+            graph_area,
+            pv_title,
+            [("PV", COLORS["pv"]), ("SV", COLORS["sv"])],
+            0,
+            200,
+            "cc/min",
+        )
+        pv_graph.configure(height=self.DESKTOP_PUMP_GRAPH_MIN)
+        pv_graph.grid(row=0, column=0, sticky="nsew", pady=(0, 4))
+
+        ao_graph = TrendGraph(
+            graph_area,
+            ao_title,
+            [(ao_legend, COLORS["ao"])],
+            0,
+            5,
+            "V",
+        )
+        ao_graph.configure(height=self.DESKTOP_PUMP_GRAPH_MIN)
+        ao_graph.grid(row=1, column=0, sticky="nsew")
+
+        return pv_graph, ao_graph
+
+    def _build_desktop_pump_footer(
+        self, parent: ttk.Frame, *, show_injection: bool
+    ) -> None:
+        """Reserve identical footer height on both pump columns."""
+        timing_block = ttk.Frame(parent, style="Panel.TFrame")
+        timing_block.pack(fill="x", pady=(8, 0))
+
+        if show_injection:
+            self.control_start_label = ttk.Label(
+                timing_block, text="제어 시작  --:--:--", style="ValueCompact.TLabel"
+            )
+            self.control_start_label.pack(anchor="w", pady=(0, 6))
+        else:
+            ttk.Label(
+                timing_block, text="\u00a0", style="ValueCompact.TLabel"
+            ).pack(anchor="w", pady=(0, 6))
+
+        injection_block = ttk.Frame(timing_block, style="Panel.TFrame")
+        injection_block.pack(fill="x")
+        injection_header = ttk.Frame(injection_block, style="Panel.TFrame")
+        injection_header.pack(fill="x")
+
+        if show_injection:
+            ttk.Label(
+                injection_header, text="물 주입시간", style="InjectionCaption.TLabel"
+            ).pack(side="left")
+            ttk.Button(
+                injection_header, text="초기화", command=self.reset_injection_time
+            ).pack(side="right")
+            self.injection_time_label = ttk.Label(
+                injection_block, text="00:00:00", style="InjectionTime.TLabel"
+            )
+            self.injection_time_label.pack(anchor="w", pady=(4, 0))
+        else:
+            ttk.Label(
+                injection_header, text="\u00a0", style="InjectionCaption.TLabel"
+            ).pack(side="left")
+            ttk.Label(
+                injection_block, text="\u00a0", style="InjectionTime.TLabel"
+            ).pack(anchor="w", pady=(4, 0))
+
     def _create_desktop_feedback_page(self) -> ttk.Frame:
         """Desktop dashboard: settings | pump1 | pump2 | trends/status, valves below."""
         page = ttk.Frame(self.content, style="App.TFrame")
@@ -1088,42 +1168,10 @@ class FlowControlApp(tk.Tk):
         self.output_value.pack(anchor="w", pady=(6, 0))
 
         ttk.Separator(pump1, orient="horizontal").pack(fill="x", pady=(8, 6))
-        self.feedback_graph = TrendGraph(
-            pump1,
-            "펌프1 PV / SV",
-            [("PV", COLORS["pv"]), ("SV", COLORS["sv"])],
-            0,
-            200,
-            "cc/min",
+        self.feedback_graph, self.feedback_ao_graph = self._build_desktop_pump_graph_area(
+            pump1, "펌프1 PV / SV", "펌프1 AO0", "AO0"
         )
-        self.feedback_graph.configure(height=118)
-        self.feedback_graph.pack(fill="both", expand=True, pady=(0, 4))
-        self.feedback_ao_graph = TrendGraph(
-            pump1, "펌프1 AO0", [("AO0", COLORS["ao"])], 0, 5, "V"
-        )
-        self.feedback_ao_graph.configure(height=78)
-        self.feedback_ao_graph.pack(fill="x", pady=(0, 6))
-
-        timing_block = ttk.Frame(pump1, style="Panel.TFrame")
-        timing_block.pack(fill="x", pady=(8, 0))
-        self.control_start_label = ttk.Label(
-            timing_block, text="제어 시작  --:--:--", style="ValueCompact.TLabel"
-        )
-        self.control_start_label.pack(anchor="w", pady=(0, 6))
-        injection_block = ttk.Frame(timing_block, style="Panel.TFrame")
-        injection_block.pack(fill="x")
-        injection_header = ttk.Frame(injection_block, style="Panel.TFrame")
-        injection_header.pack(fill="x")
-        ttk.Label(
-            injection_header, text="물 주입시간", style="InjectionCaption.TLabel"
-        ).pack(side="left")
-        ttk.Button(
-            injection_header, text="초기화", command=self.reset_injection_time
-        ).pack(side="right")
-        self.injection_time_label = ttk.Label(
-            injection_block, text="00:00:00", style="InjectionTime.TLabel"
-        )
-        self.injection_time_label.pack(anchor="w", pady=(4, 0))
+        self._build_desktop_pump_footer(pump1, show_injection=True)
 
         # --- Col 2: Pump 2 + graphs ---
         pump2 = self.panel(page)
@@ -1132,6 +1180,7 @@ class FlowControlApp(tk.Tk):
         ttk.Label(pump2, text="펌프2 · AO2", style="PanelTitle.TLabel").pack(anchor="w")
         self.focus_pv2 = ttk.Label(pump2, text="0.0", style="Value.TLabel")
         self.focus_pv2.pack(anchor="w", pady=(2, 0))
+        ttk.Label(pump2, text="cc/min", style="Hint.TLabel").pack(anchor="w")
         sv_row2 = ttk.Frame(pump2, style="Panel.TFrame")
         sv_row2.pack(fill="x", pady=(8, 0))
         ttk.Label(sv_row2, text="SV", style="Panel.TLabel").pack(side="left")
@@ -1143,7 +1192,9 @@ class FlowControlApp(tk.Tk):
             width=9,
         )
         self.sv2_entry.pack(side="right")
-        ttk.Label(pump2, text="cc/min", style="Hint.TLabel").pack(anchor="e")
+        ttk.Label(pump2, text="Enter로 적용", style="Hint.TLabel").pack(
+            anchor="e", pady=(2, 0)
+        )
         stat2 = ttk.Frame(pump2, style="Panel.TFrame")
         stat2.pack(fill="x", pady=(6, 0))
         self.focus_err2 = ttk.Label(stat2, text="Δ 0.0", style="ValueSmall.TLabel")
@@ -1156,21 +1207,12 @@ class FlowControlApp(tk.Tk):
         self.output_value2.pack(anchor="w", pady=(6, 0))
 
         ttk.Separator(pump2, orient="horizontal").pack(fill="x", pady=(8, 6))
-        self.feedback_graph2 = TrendGraph(
-            pump2,
-            "펌프2 PV / SV",
-            [("PV", COLORS["pv"]), ("SV", COLORS["sv"])],
-            0,
-            200,
-            "cc/min",
+        self.feedback_graph2, self.feedback_ao_graph2 = (
+            self._build_desktop_pump_graph_area(
+                pump2, "펌프2 PV / SV", "펌프2 AO2", "AO2"
+            )
         )
-        self.feedback_graph2.configure(height=118)
-        self.feedback_graph2.pack(fill="both", expand=True, pady=(0, 4))
-        self.feedback_ao_graph2 = TrendGraph(
-            pump2, "펌프2 AO2", [("AO2", COLORS["ao"])], 0, 5, "V"
-        )
-        self.feedback_ao_graph2.configure(height=78)
-        self.feedback_ao_graph2.pack(fill="x")
+        self._build_desktop_pump_footer(pump2, show_injection=False)
 
         # --- Col 3: comm + IGN/Coolint ---
         monitor = self.panel(page)
